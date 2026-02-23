@@ -387,7 +387,7 @@ function ProductsModule() {
 
   const STATUS = [
     {id:"all",    label:"Tous",          count:PRODUCTS.length},
-    {id:"sync",   label:"SynchronisÃ©s",  count:PRODUCTS.filter(p=>p.sage&&p.presta).length},
+    {id:"sync",   label:"Synchronisés",  count:PRODUCTS.filter(p=>p.sage&&p.presta).length},
     {id:"unsync", label:"Non sync",      count:PRODUCTS.filter(p=>!p.sage||!p.presta).length},
     {id:"rupture",label:"Rupture",       count:PRODUCTS.filter(p=>p.stock===0).length},
     {id:"new",    label:"Nouveaux",      count:PRODUCTS.filter(p=>p.isNew).length},
@@ -398,12 +398,12 @@ function ProductsModule() {
     <div style={{padding:"28px 32px"}}>
       {modal && <ProductModal product={modal} onClose={()=>setModal(null)}/>}
 
-      <SectionTitle sub={`${PRODUCTS.length} rÃ©fÃ©rences Â· ${PRODUCTS.filter(p=>p.sage&&p.presta).length} synchronisÃ©es Atoo-Sync`}>Catalogue Produits</SectionTitle>
+      <SectionTitle sub={`${PRODUCTS.length} références · ${PRODUCTS.filter(p=>p.sage&&p.presta).length} synchronisées Atoo-Sync`}>Catalogue Produits</SectionTitle>
 
       {/* Search bar */}
       <div style={{position:"relative",marginBottom:16}}>
-        <span style={{position:"absolute",left:18,top:"50%",transform:"translateY(-50%)",color:T.ivoryMuted,fontSize:14,pointerEvents:"none"}}>âŒ•</span>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher â€” nom, rÃ©fÃ©rence, catÃ©gorie, fournisseurâ€¦"
+        <span style={{position:"absolute",left:18,top:"50%",transform:"translateY(-50%)",color:T.ivoryMuted,fontSize:14,pointerEvents:"none"}}>⌕</span>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher — nom, référence, catégorie, fournisseur…"
           style={{width:"100%",background:T.panel,border:`1px solid ${T.border}`,borderRadius:14,padding:"13px 18px 13px 46px",color:T.ink,fontSize:13,outline:"none",boxSizing:"border-box",
             fontFamily:"inherit",transition:"border-color .2s"}}
           onFocus={e=>e.target.style.borderColor=T.bronze}
@@ -411,11 +411,11 @@ function ProductsModule() {
         />
         <div style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",display:"flex",gap:8,alignItems:"center"}}>
           <select value={sort} onChange={e=>setSort(e.target.value)} style={{background:"transparent",border:"none",color:T.ivoryMuted,fontSize:11,cursor:"pointer",outline:"none",fontFamily:"inherit"}}>
-            <option value="name">Nom Aâ†’Z</option>
-            <option value="stock">Stock â†‘</option>
-            <option value="price">Prix â†“</option>
-            <option value="sales">Ventes â†“</option>
-            <option value="days">AnciennetÃ© â†“</option>
+            <option value="name">Nom A→Z</option>
+            <option value="stock">Stock ↑</option>
+            <option value="price">Prix ↓</option>
+            <option value="sales">Ventes ↓</option>
+            <option value="days">Ancienneté ↓</option>
           </select>
         </div>
       </div>
@@ -429,7 +429,7 @@ function ProductsModule() {
         ))}
       </div>
       <div style={{display:"flex",gap:6,marginBottom:20,flexWrap:"wrap"}}>
-        <Pill active={cat==="all"} color={T.gold} onClick={()=>setCat("all")} small>Toutes catÃ©gories</Pill>
+        <Pill active={cat==="all"} color={T.gold} onClick={()=>setCat("all")} small>Toutes catégories</Pill>
         {CATS.map(c=>(
           <Pill key={c} active={cat===c} color={T.gold} onClick={()=>setCat(c)} small>{CAT_ICONS[c]} {c}</Pill>
         ))}
@@ -441,7 +441,7 @@ function ProductsModule() {
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
             <thead>
               <tr style={{background:T.bg+"bb"}}>
-                {["Produit","RÃ©f.","CatÃ©gorie","Stock","HT","TTC","Marge","Ventes","Rotation","Sync",""].map(h=>(
+                {["Produit","Réf.","Catégorie","Stock","HT","TTC","Marge","Ventes","Rotation","Sync",""].map(h=>(
                   <th key={h} style={{padding:"12px 14px",textAlign:"left",color:T.ivoryMuted,fontWeight:500,fontSize:9,textTransform:"uppercase",letterSpacing:1.2,borderBottom:`1px solid ${T.border}`,whiteSpace:"nowrap",fontFamily:"inherit"}}>{h}</th>
                 ))}
               </tr>
@@ -498,7 +498,7 @@ function ProductsModule() {
                       <button onClick={e=>{e.stopPropagation();setModal(p);}} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,fontSize:10,cursor:"pointer",fontFamily:"inherit",letterSpacing:.3,transition:"all .15s"}}
                         onMouseEnter={e=>{e.target.style.borderColor=T.bronze;e.target.style.color=T.bronze}}
                         onMouseLeave={e=>{e.target.style.borderColor=T.border;e.target.style.color=T.ivoryMuted}}>
-                        Voir â†’
+                        Voir →
                       </button>
                     </td>
                   </tr>
@@ -507,7 +507,7 @@ function ProductsModule() {
             </tbody>
           </table>
         </div>
-        {filtered.length===0&&<div style={{padding:48,textAlign:"center",color:T.ivoryMuted,fontStyle:"italic",fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:18}}>Aucun produit trouvÃ©</div>}
+        {filtered.length===0&&<div style={{padding:48,textAlign:"center",color:T.ivoryMuted,fontStyle:"italic",fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:18}}>Aucun produit trouvé</div>}
       </div>
 
       <div style={{marginTop:12,display:"flex",justifyContent:"space-between",fontSize:11,color:T.ivoryMuted}}>
@@ -651,10 +651,10 @@ function ReportingModule() {
 
         {sales&&(
           <div style={{background:"#c060a018",border:"1px solid #c060a033",borderRadius:12,padding:"12px 18px",marginBottom:16,display:"flex",gap:12,alignItems:"center"}}>
-            <span style={{fontSize:26}}>ðŸ·ï¸</span>
+            <span style={{fontSize:26}}>🏷️</span>
             <div>
-              <div style={{fontWeight:700,color:"#e090c0",fontSize:13}}>Mode Soldes activÃ© â€” {saleProds.length} produits Ã©ligibles</div>
-              <div style={{fontSize:11,color:T.ivoryMuted,marginTop:2}}>SÃ©lection basÃ©e sur anciennetÃ© stock (>60j) Â· Remise suggÃ©rÃ©e âˆ’40 %</div>
+              <div style={{fontWeight:700,color:"#e090c0",fontSize:13}}>Mode soldes activé — {saleProds.length} produits éligibles</div>
+              <div style={{fontSize:11,color:T.ivoryMuted,marginTop:2}}>Sélection basée sur ancienneté stock (&gt;60j) · Remise suggérée −40 %</div>
             </div>
           </div>
         )}
@@ -1186,7 +1186,7 @@ export default function App() {
           </div>
           {/* Stock badge */}
           <div style={{background:T.bronze+"14",border:`1px solid ${T.bronze}28`,borderRadius:9,padding:"5px 13px",fontSize:11,color:T.bronze,fontWeight:500,fontFamily:"'DM Mono',monospace",letterSpacing:.3}}>
-            {PRODUCTS.length} rÃ©f. Â· {PRODUCTS.reduce((s,p)=>s+p.stock,0)} u.
+            {PRODUCTS.length} réf. · {PRODUCTS.reduce((s,p)=>s+p.stock,0)} u.
           </div>
         </div>
       </header>
@@ -1212,8 +1212,8 @@ export default function App() {
             <div style={{fontSize:9,color:"#98afc4",fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:1.2}}>Alertes</div>
             {[
               {l:"Ruptures",n:PRODUCTS.filter(p=>p.stock===0).length,    c:T.red},
-              {l:"Ã€ promouvoir",n:PRODUCTS.filter(p=>p.isNew||p.daysInStock>150).length,c:T.orange},
-              {l:"Non synchronisÃ©s",n:PRODUCTS.filter(p=>!p.sage||!p.presta).length,c:T.gold},
+              {l:"À promouvoir",n:PRODUCTS.filter(p=>p.isNew||p.daysInStock>150).length,c:T.orange},
+              {l:"Non synchronisés",n:PRODUCTS.filter(p=>!p.sage||!p.presta).length,c:T.gold},
             ].map(s=>(
               <div key={s.l} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}44`}}>
                 <span style={{fontSize:10,color:"#b8c8d8"}}>{s.l}</span>
@@ -1224,13 +1224,13 @@ export default function App() {
 
           <div style={{marginTop:"auto",paddingTop:14,borderTop:"1px solid rgba(255,255,255,0.12)"}}>
             <div style={{fontSize:9,color:"#98afc4",marginBottom:6,letterSpacing:.5}}>
-              {syncState.lastSync ? `DerniÃ¨re sync Â· ${syncState.lastSync.toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit"})}` : "DerniÃ¨re sync Â· --:--"}
+              {syncState.lastSync ? `Dernière sync · ${syncState.lastSync.toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit"})}` : "Dernière sync · --:--"}
             </div>
             {syncState.error && <div style={{fontSize:9,color:"#f3a0a0",marginBottom:8}}>{syncState.error}</div>}
             <button onClick={syncLiveData} disabled={syncState.loading} style={{width:"100%",padding:"8px",borderRadius:9,background:"transparent",border:"1px solid rgba(255,255,255,0.18)",color:"#d2e1ee",fontSize:11,cursor:syncState.loading?"wait":"pointer",fontFamily:"inherit",transition:"all .15s",opacity:syncState.loading?0.7:1}}
               onMouseEnter={e=>{e.target.style.borderColor="#25b9d7";e.target.style.color="#ffffff"}}
               onMouseLeave={e=>{e.target.style.borderColor="rgba(255,255,255,0.18)";e.target.style.color="#d2e1ee"}}>
-              â†» Forcer la synchro
+              ↻ Forcer la synchro
             </button>
           </div>
         </nav>

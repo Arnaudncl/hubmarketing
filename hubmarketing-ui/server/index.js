@@ -245,6 +245,48 @@ app.get('/api/prestashop/orders', async (req, res) => {
   }
 });
 
+app.get('/api/prestashop/tax-rates', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 5000), 20000);
+    const [taxRulesRes, taxRatesRes] = await Promise.all([
+      psGet('tax_rule', {
+        output_format: 'JSON',
+        display: 'full',
+        limit: `0,${limit}`,
+      }),
+      psGet('taxes', {
+        output_format: 'JSON',
+        display: 'full',
+        limit: `0,${Math.min(limit, 5000)}`,
+      }),
+    ]);
+
+    const taxRules = toArray(taxRulesRes?.prestashop?.tax_rules?.tax_rule || taxRulesRes?.tax_rules || []);
+    const taxes = toArray(taxRatesRes?.prestashop?.taxes?.tax || taxRatesRes?.taxes || []);
+    const taxById = new Map();
+    taxes.forEach(t => {
+      const id = String(t?.id || '').trim();
+      if (!id) return;
+      const rate = Number(t?.rate || 0);
+      taxById.set(id, Number.isFinite(rate) ? rate : 0);
+    });
+
+    // id_tax_rules_group -> max tax rate found in rules for that group.
+    const map = {};
+    taxRules.forEach(r => {
+      const gid = String(r?.id_tax_rules_group || '').trim();
+      const taxId = String(r?.id_tax || '').trim();
+      if (!gid || !taxId) return;
+      const rate = taxById.get(taxId) || 0;
+      map[gid] = Math.max(Number(map[gid] || 0), rate);
+    });
+
+    res.json({ ok: true, count: Object.keys(map).length, map });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
+  }
+});
+
 app.get('/api/unified/overview', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 100), 500);
