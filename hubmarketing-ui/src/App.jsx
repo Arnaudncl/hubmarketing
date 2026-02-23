@@ -61,14 +61,34 @@ const SALES = [
   { month:"DÃ©c",   sage:48600, presta:39200, orders:78 },
   { month:"Jan",   sage:29800, presta:24100, orders:47 },
 ];
-const CATS = ["CanapÃ©s","Tables","Literie","Rangement","Fauteuils","Chaises","Luminaires","DÃ©coration"];
-const CAT_ICONS = { "CanapÃ©s":"ðŸ›‹ï¸", "Tables":"ðŸ½ï¸", "Literie":"ðŸ›ï¸", "Rangement":"ðŸ—„ï¸", "Fauteuils":"ðŸ’º", "Chaises":"ðŸª‘", "Luminaires":"ðŸ’¡", "DÃ©coration":"ðŸªž" };
+const CATS = ["Canapés","Tables","Literie","Rangement","Fauteuils","Chaises","Luminaires","Décoration"];
+const CAT_ICONS = {
+  "Canapés":"🛋️",
+  "Tables":"🍽️",
+  "Literie":"🛏️",
+  "Rangement":"🗄️",
+  "Fauteuils":"💺",
+  "Chaises":"🪑",
+  "Luminaires":"💡",
+  "Décoration":"🪞",
+};
 const API_BASE = "http://127.0.0.1:4000/api";
+const CURRENCY = "XPF";
 
 const toNum = v => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 };
+const mojibakeFix = val => {
+  const s = String(val ?? "");
+  if (!/[ÃÂâð]/.test(s)) return s;
+  try {
+    return decodeURIComponent(escape(s));
+  } catch {
+    return s;
+  }
+};
+const money = n => `${Number(n || 0).toLocaleString("fr-FR")} ${CURRENCY}`;
 const stripHtml = s => String(s || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 const daysSince = dateStr => {
   const d = new Date(dateStr);
@@ -219,6 +239,26 @@ const SectionTitle = ({children, sub}) => (
   </div>
 );
 
+const ProductThumb = ({product, size=40}) => {
+  const [imgError, setImgError] = useState(false);
+  const showImage = !!product?.imageUrl && !imgError;
+  return (
+    <div style={{width:size,height:size,borderRadius:10,background:T.panelRaised,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:Math.max(18, Math.floor(size*0.48)),flexShrink:0,overflow:"hidden"}}>
+      {showImage ? (
+        <img
+          src={product.imageUrl}
+          alt={mojibakeFix(product.name || "Produit")}
+          style={{width:"100%",height:"100%",objectFit:"cover"}}
+          loading="lazy"
+          onError={()=>setImgError(true)}
+        />
+      ) : (
+        product.image || "📦"
+      )}
+    </div>
+  );
+};
+
 /* â”€â”€â”€ PRODUCT MODAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function ProductModal({product, onClose}) {
   const promo = promoType(product);
@@ -235,24 +275,24 @@ function ProductModal({product, onClose}) {
 
         {/* Header */}
         <div style={{padding:"28px 32px 22px",borderBottom:`1px solid ${T.border}`,display:"flex",gap:20,alignItems:"flex-start"}}>
-          <div style={{width:96,height:96,borderRadius:16,background:T.panel,border:`1px solid ${T.borderWarm}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:52,flexShrink:0,boxShadow:"inset 0 1px 0 rgba(255,255,255,.05)"}}>
-            {product.image}
+          <div style={{width:96,height:96,flexShrink:0}}>
+            <ProductThumb product={product} size={96}/>
           </div>
           <div style={{flex:1}}>
             <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
-              <h2 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:24,fontWeight:600,color:T.ivory,margin:0,letterSpacing:0.3}}>{product.name}</h2>
+              <h2 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:24,fontWeight:600,color:T.ivory,margin:0,letterSpacing:0.3}}>{mojibakeFix(product.name)}</h2>
               {product.isNew && <span style={{background:T.blue+"22",color:T.blueLight,fontSize:9,fontWeight:700,padding:"3px 10px",borderRadius:20,border:`1px solid ${T.blue}44`,letterSpacing:1,textTransform:"uppercase"}}>Nouveau</span>}
             </div>
             <div style={{fontSize:12,color:T.ivoryMuted,marginBottom:12,display:"flex",gap:10,flexWrap:"wrap"}}>
-              <span style={{fontFamily:"'DM Mono',monospace",color:T.bronze,fontSize:11}}>{product.ref}</span>
-              <span style={{color:T.ivoryDeep}}>Â·</span>
-              <span>{CAT_ICONS[product.category]} {product.category}</span>
-              <span style={{color:T.ivoryDeep}}>Â·</span>
-              <span>{product.supplier}</span>
+              <span style={{fontFamily:"'DM Mono',monospace",color:T.bronze,fontSize:11}}>{mojibakeFix(product.ref)}</span>
+              <span style={{color:T.ivoryDeep}}>·</span>
+              <span>{CAT_ICONS[mojibakeFix(product.category)] || "📦"} {mojibakeFix(product.category)}</span>
+              <span style={{color:T.ivoryDeep}}>·</span>
+              <span>{mojibakeFix(product.supplier)}</span>
             </div>
-            <p style={{fontSize:13,color:T.inkDim,lineHeight:1.65,margin:0}}>{product.description}</p>
+            <p style={{fontSize:13,color:T.inkDim,lineHeight:1.65,margin:0}}>{mojibakeFix(product.description)}</p>
           </div>
-          <button onClick={onClose} style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:10,width:36,height:36,cursor:"pointer",color:T.ivoryMuted,fontSize:16,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>âœ•</button>
+          <button onClick={onClose} style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:10,width:36,height:36,cursor:"pointer",color:T.ivoryMuted,fontSize:16,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         </div>
 
         <div style={{padding:"24px 32px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
@@ -261,8 +301,8 @@ function ProductModal({product, onClose}) {
             {/* KPIs */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
               {[
-                {l:"Prix Sage HT",    v:product.price.toLocaleString("fr-FR")+" â‚¬", c:T.ink},
-                {l:"Prix Boutique",   v:product.priceShop.toLocaleString("fr-FR")+" â‚¬", c:T.bronze},
+                {l:"Prix Sage HT",    v:money(product.price), c:T.ink},
+                {l:"Prix Boutique",   v:money(product.priceShop), c:T.bronze},
                 {l:"Marge brute",     v:"+"+margin+"%",    c:T.green},
                 {l:"Ventes totales",  v:product.sales+" u.", c:T.gold},
               ].map(k=>(
@@ -275,7 +315,7 @@ function ProductModal({product, onClose}) {
 
             {/* Specs */}
             <div style={{background:T.panel,borderRadius:14,padding:18,border:`1px solid ${T.border}`}}>
-              <div style={{fontSize:9,color:T.ivoryMuted,fontWeight:700,marginBottom:14,textTransform:"uppercase",letterSpacing:1.5}}>CaractÃ©ristiques</div>
+              <div style={{fontSize:9,color:T.ivoryMuted,fontWeight:700,marginBottom:14,textTransform:"uppercase",letterSpacing:1.5}}>Caractéristiques</div>
               {[["Dimensions",product.dimensions],["Poids",product.weight],["Fournisseur",product.supplier],["En stock depuis",product.createdAt]].map(([k,v])=>(
                 <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${T.border}`,fontSize:12}}>
                   <span style={{color:T.ivoryMuted}}>{k}</span>
@@ -286,13 +326,13 @@ function ProductModal({product, onClose}) {
 
             {/* Atoo-Sync */}
             <div style={{background:T.panel,borderRadius:14,padding:18,border:`1px solid ${T.border}`}}>
-              <div style={{fontSize:9,color:T.ivoryMuted,fontWeight:700,marginBottom:14,textTransform:"uppercase",letterSpacing:1.5}}>Atoo-Sync â€” Synchronisation</div>
+              <div style={{fontSize:9,color:T.ivoryMuted,fontWeight:700,marginBottom:14,textTransform:"uppercase",letterSpacing:1.5}}>Synchronisation</div>
               <div style={{display:"flex",gap:10}}>
                 {[{l:"Sage",ok:product.sage},{l:"PrestaShop",ok:product.presta}].map(s=>(
                   <div key={s.l} style={{flex:1,textAlign:"center",background:s.ok?T.green+"12":T.red+"12",border:`1px solid ${s.ok?T.green:T.red}30`,borderRadius:12,padding:"14px 0"}}>
-                    <div style={{fontSize:24,marginBottom:6}}>{s.ok?"âœ…":"âŒ"}</div>
+                    <div style={{fontSize:24,marginBottom:6}}>{s.ok?"✅":"❌"}</div>
                     <div style={{fontSize:11,color:s.ok?T.greenLight:T.redLight,fontWeight:700}}>{s.l}</div>
-                    <div style={{fontSize:10,color:T.ivoryMuted,marginTop:2}}>{s.ok?"SynchronisÃ©":"Non sync"}</div>
+                    <div style={{fontSize:10,color:T.ivoryMuted,marginTop:2}}>{s.ok?"Synchronisé":"Non sync"}</div>
                   </div>
                 ))}
               </div>
@@ -308,7 +348,7 @@ function ProductModal({product, onClose}) {
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             {/* Stock */}
             <div style={{background:T.panel,borderRadius:14,padding:20,border:`1px solid ${T.border}`}}>
-              <div style={{fontSize:9,color:T.ivoryMuted,fontWeight:700,marginBottom:16,textTransform:"uppercase",letterSpacing:1.5}}>Ã‰tat du Stock</div>
+              <div style={{fontSize:9,color:T.ivoryMuted,fontWeight:700,marginBottom:16,textTransform:"uppercase",letterSpacing:1.5}}>État du Stock</div>
               <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:16}}>
                 <div style={{fontFamily:"'DM Mono',monospace",fontSize:52,fontWeight:500,color:ss.c,lineHeight:1}}>{product.stock}</div>
                 <div>
@@ -320,7 +360,7 @@ function ProductModal({product, onClose}) {
               <div style={{height:6,background:T.panelRaised,borderRadius:3,overflow:"hidden",marginBottom:6}}>
                 <div style={{height:"100%",width:Math.min(100,(product.stock/(product.stockMin*4))*100)+"%",background:`linear-gradient(90deg,${ss.c}88,${ss.c})`,borderRadius:3,transition:"width .6s"}}/>
               </div>
-              <div style={{fontSize:10,color:T.ivoryMuted}}>Valeur en stock : {(product.priceShop*product.stock).toLocaleString("fr-FR")} â‚¬</div>
+              <div style={{fontSize:10,color:T.ivoryMuted}}>Valeur en stock : {money(product.priceShop*product.stock)}</div>
             </div>
 
             {/* Rotation */}
@@ -342,7 +382,7 @@ function ProductModal({product, onClose}) {
                 <div style={{height:"100%",width:Math.max(5,100-product.daysInStock/3)+"%",background:product.daysInStock>150?T.orange:product.daysInStock>90?T.gold:T.green,borderRadius:2}}/>
               </div>
               <div style={{fontSize:10,color:T.ivoryMuted,marginTop:6}}>
-                Score rotation : {product.daysInStock>150?"âš  Faible â€” action recommandÃ©e":product.daysInStock>90?"â—Ž Moyen â€” Ã  surveiller":"âœ“ Bon"}
+                Score rotation : {product.daysInStock>150?"⚠ Faible — action recommandée":product.daysInStock>90?"◉ Moyen — à surveiller":"✓ Bon"}
               </div>
             </div>
 
@@ -352,8 +392,8 @@ function ProductModal({product, onClose}) {
                 <div style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:16,fontWeight:600,color:promo.c,marginBottom:6}}>{promo.label}</div>
                 <div style={{fontSize:12,color:T.inkDim,lineHeight:1.55,marginBottom:14}}>{promo.desc}</div>
                 <div style={{display:"flex",gap:8}}>
-                  <button style={{flex:1,padding:"9px",borderRadius:10,border:"none",cursor:"pointer",background:promo.c,color:"#fff",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>CrÃ©er une campagne</button>
-                  <button style={{padding:"9px 14px",borderRadius:10,border:`1px solid ${promo.c}44`,cursor:"pointer",background:"transparent",color:promo.c,fontSize:12,fontFamily:"inherit"}}>Studio â†’</button>
+                  <button style={{flex:1,padding:"9px",borderRadius:10,border:"none",cursor:"pointer",background:promo.c,color:"#fff",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>Créer une campagne</button>
+                  <button style={{padding:"9px 14px",borderRadius:10,border:`1px solid ${promo.c}44`,cursor:"pointer",background:"transparent",color:promo.c,fontSize:12,fontFamily:"inherit"}}>Studio →</button>
                 </div>
               </div>
             )}
@@ -362,7 +402,7 @@ function ProductModal({product, onClose}) {
               <button style={{flex:1,padding:"12px",borderRadius:12,border:`1px solid ${T.borderWarm}`,cursor:"pointer",background:`linear-gradient(135deg,${T.bronze},${T.bronzeDark})`,color:"#fff",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>
                 Modifier le produit
               </button>
-              <button style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,cursor:"pointer",background:"transparent",color:T.ivoryMuted,fontSize:13,fontFamily:"inherit"}}>â†—</button>
+              <button style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,cursor:"pointer",background:"transparent",color:T.ivoryMuted,fontSize:13,fontFamily:"inherit"}}>↗</button>
             </div>
           </div>
         </div>
@@ -456,11 +496,9 @@ function ProductsModule() {
                     onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <td style={{padding:"13px 14px"}}>
                       <div style={{display:"flex",alignItems:"center",gap:12}}>
-                        <div style={{width:40,height:40,borderRadius:10,background:T.panelRaised,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
-                          {p.image}
-                        </div>
+                        <ProductThumb product={p} size={40}/>
                         <div>
-                          <div style={{color:T.ink,fontWeight:600,fontSize:12,marginBottom:2}}>{p.name}</div>
+                          <div style={{color:T.ink,fontWeight:600,fontSize:12,marginBottom:2}}>{mojibakeFix(p.name)}</div>
                           <div style={{display:"flex",gap:4}}>
                             {p.isNew&&<span style={{background:T.blue+"20",color:T.blueLight,fontSize:8,fontWeight:700,padding:"1px 7px",borderRadius:10,letterSpacing:.5}}>NOUVEAU</span>}
                             {pt?.type==="slow"&&<span style={{background:T.orange+"20",color:T.orangeLight,fontSize:8,fontWeight:700,padding:"1px 7px",borderRadius:10,letterSpacing:.5}}>LENT</span>}
@@ -468,16 +506,16 @@ function ProductsModule() {
                         </div>
                       </div>
                     </td>
-                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:10,color:T.bronze}}>{p.ref}</td>
+                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:10,color:T.bronze}}>{mojibakeFix(p.ref)}</td>
                     <td style={{padding:"13px 14px"}}>
-                      <span style={{background:T.panelRaised,borderRadius:6,padding:"3px 8px",fontSize:10,color:T.ivoryMuted}}>{CAT_ICONS[p.category]} {p.category}</span>
+                      <span style={{background:T.panelRaised,borderRadius:6,padding:"3px 8px",fontSize:10,color:T.ivoryMuted}}>{CAT_ICONS[mojibakeFix(p.category)] || "📦"} {mojibakeFix(p.category)}</span>
                     </td>
                     <td style={{padding:"13px 14px"}}>
                       <span style={{fontFamily:"'DM Mono',monospace",color:ss.c,fontWeight:500,fontSize:15}}>{p.stock}</span>
                       <span style={{fontSize:9,color:T.ivoryMuted,display:"block"}}>min {p.stockMin}</span>
                     </td>
-                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:11,color:T.inkDim,whiteSpace:"nowrap"}}>{p.price.toLocaleString("fr-FR")} â‚¬</td>
-                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:11,color:T.bronze,fontWeight:500,whiteSpace:"nowrap"}}>{p.priceShop.toLocaleString("fr-FR")} â‚¬</td>
+                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:11,color:T.inkDim,whiteSpace:"nowrap"}}>{money(p.price)}</td>
+                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:11,color:T.bronze,fontWeight:500,whiteSpace:"nowrap"}}>{money(p.priceShop)}</td>
                     <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:11,color:T.green}}>+{m}%</td>
                     <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:13,color:T.gold,fontWeight:500}}>{p.sales}</td>
                     <td style={{padding:"13px 14px"}}>
@@ -490,8 +528,8 @@ function ProductsModule() {
                     </td>
                     <td style={{padding:"13px 14px"}}>
                       <div style={{display:"flex",gap:3}}>
-                        <span style={{fontSize:12}} title="Sage">{p.sage?"ðŸŸ¢":"ðŸ”´"}</span>
-                        <span style={{fontSize:12}} title="PrestaShop">{p.presta?"ðŸŸ¢":"ðŸ”´"}</span>
+                        <span style={{fontSize:12}} title="Sage">{p.sage?"🟢":"🔴"}</span>
+                        <span style={{fontSize:12}} title="PrestaShop">{p.presta?"🟢":"🔴"}</span>
                       </div>
                     </td>
                     <td style={{padding:"13px 14px"}}>
@@ -511,8 +549,8 @@ function ProductsModule() {
       </div>
 
       <div style={{marginTop:12,display:"flex",justifyContent:"space-between",fontSize:11,color:T.ivoryMuted}}>
-        <span>{filtered.length} produit(s) affichÃ©(s)</span>
-        <span>Valeur stock visible : {filtered.reduce((s,p)=>s+p.priceShop*p.stock,0).toLocaleString("fr-FR")} â‚¬</span>
+        <span>{filtered.length} produit(s) affiché(s)</span>
+        <span>Valeur stock visible : {money(filtered.reduce((s,p)=>s+p.priceShop*p.stock,0))}</span>
       </div>
     </div>
   );
