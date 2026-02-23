@@ -3,9 +3,14 @@ import express from 'express';
 import cors from 'cors';
 import sql from 'mssql/msnodesqlv8.js';
 import { XMLParser } from 'fast-xml-parser';
+import { spawn } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const app = express();
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '' });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 4000);
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://127.0.0.1:5173,http://127.0.0.1:5174,http://localhost:5173,http://localhost:5174';
@@ -101,6 +106,59 @@ function toArray(value) {
   if (!value) return [];
   return Array.isArray(value) ? value : [value];
 }
+
+function scheduleSelfRestartWindows() {
+  const cmd = [
+    'Start-Sleep -Seconds 1;',
+    `Start-Process -FilePath '${process.execPath}' -ArgumentList '${path.join(__dirname, 'index.js')}' -WorkingDirectory '${__dirname}' -WindowStyle Hidden;`
+  ].join(' ');
+  const child = spawn('powershell.exe', ['-NoProfile', '-Command', cmd], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+}
+
+async function gracefulShutdown(exitCode = 0) {
+  try {
+    if (pool?.connected) await pool.close();
+  } catch {
+    // ignore close errors
+  } finally {
+    process.exit(exitCode);
+  }
+}
+
+app.get('/api/system/backend/status', (_req, res) => {
+  res.json({
+    ok: true,
+    pid: process.pid,
+    uptimeSec: Math.floor(process.uptime()),
+    startedAt: new Date(Date.now() - Math.floor(process.uptime() * 1000)).toISOString(),
+    platform: process.platform,
+  });
+});
+
+app.post('/api/system/backend/stop', (_req, res) => {
+  res.json({ ok: true, action: 'stop', message: 'Backend stopping...' });
+  setTimeout(() => gracefulShutdown(0), 250);
+});
+
+app.post('/api/system/backend/restart', (_req, res) => {
+  if (process.platform !== 'win32') {
+    res.status(400).json({ ok: false, action: 'restart', message: 'Auto-restart endpoint is only enabled on Windows.' });
+    return;
+  }
+
+  try {
+    scheduleSelfRestartWindows();
+    res.json({ ok: true, action: 'restart', message: 'Backend restarting...' });
+    setTimeout(() => gracefulShutdown(0), 300);
+  } catch (error) {
+    res.status(500).json({ ok: false, action: 'restart', message: error.message });
+  }
+});
 
 app.get('/api/sage/health', async (_req, res) => {
   try {

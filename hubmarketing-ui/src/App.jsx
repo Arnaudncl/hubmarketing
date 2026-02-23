@@ -73,6 +73,7 @@ const CAT_ICONS = {
   "Décoration":"🪞",
 };
 const API_BASE = "http://127.0.0.1:4000/api";
+const SUPERVISOR_BASE = "http://127.0.0.1:4010/api/supervisor";
 const CURRENCY = "XPF";
 
 const toNum = v => {
@@ -1129,8 +1130,42 @@ export default function App() {
     error: "",
     status: { sage: false, presta: false },
   });
+  const [backendCtl, setBackendCtl] = useState({
+    online: true,
+    uptimeSec: 0,
+    busy: false,
+    msg: "",
+  });
   const am = MODULES.find(m=>m.id===active);
   const CONTENT = {products:<ProductsModule/>,images:<ImagesModule/>,reporting:<ReportingModule/>,studio:<StudioModule/>,assistant:<AssistantModule/>};
+  const START_BACKEND_CMD = "cd d:\\IT\\Ancien PC\\App\\HubMarketing\\hubmarketing-ui\\server && npm run supervisor";
+
+  const refreshBackendStatus = useCallback(async () => {
+    try {
+      const r = await fetch(`${SUPERVISOR_BASE}/status`);
+      const j = await r.json();
+      setBackendCtl(prev => ({ ...prev, online: !!j.backend?.running, uptimeSec: Number(j.backend?.uptimeSec || 0) }));
+    } catch {
+      setBackendCtl(prev => ({ ...prev, online: false, uptimeSec: 0 }));
+    }
+  }, []);
+
+  const controlBackend = useCallback(async action => {
+    setBackendCtl(prev => ({ ...prev, busy: true, msg: "" }));
+    try {
+      const r = await fetch(`${SUPERVISOR_BASE}/${action}`, { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      setBackendCtl(prev => ({ ...prev, busy: false, msg: j.message || `Action ${action} envoyée.` }));
+      setTimeout(() => refreshBackendStatus(), 800);
+    } catch (e) {
+      try {
+        await navigator.clipboard.writeText(START_BACKEND_CMD);
+        setBackendCtl(prev => ({ ...prev, busy: false, msg: "Superviseur non lancé. Commande copiée pour démarrer le superviseur." }));
+      } catch {
+        setBackendCtl(prev => ({ ...prev, busy: false, msg: `Superviseur non lancé. Lance: ${START_BACKEND_CMD}` }));
+      }
+    }
+  }, [START_BACKEND_CMD, refreshBackendStatus]);
 
   const syncLiveData = useCallback(async () => {
     setSyncState(prev => ({ ...prev, loading: true, error: "" }));
@@ -1176,6 +1211,12 @@ export default function App() {
   useEffect(() => {
     syncLiveData();
   }, [syncLiveData]);
+
+  useEffect(() => {
+    refreshBackendStatus();
+    const id = setInterval(refreshBackendStatus, 8000);
+    return () => clearInterval(id);
+  }, [refreshBackendStatus]);
 
   return (
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:"'Open Sans','Segoe UI',sans-serif",color:T.ink,display:"flex",flexDirection:"column"}}>
@@ -1270,6 +1311,22 @@ export default function App() {
               onMouseLeave={e=>{e.target.style.borderColor="rgba(255,255,255,0.18)";e.target.style.color="#d2e1ee"}}>
               ↻ Forcer la synchro
             </button>
+
+            <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid rgba(255,255,255,0.10)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                <span style={{fontSize:9,color:"#98afc4",letterSpacing:.5}}>Backend</span>
+                <span style={{fontSize:9,color:backendCtl.online?"#60d394":"#f3a0a0"}}>{backendCtl.online?"En ligne":"Arrêté"}</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
+                <button onClick={()=>controlBackend("start")} style={{padding:"6px 4px",borderRadius:8,border:"1px solid rgba(96,211,148,0.35)",background:"rgba(96,211,148,0.12)",color:"#8de5b3",fontSize:10,cursor:"pointer"}}>Démarrer</button>
+                <button onClick={()=>controlBackend("stop")} disabled={backendCtl.busy || !backendCtl.online} style={{padding:"6px 4px",borderRadius:8,border:"1px solid rgba(243,160,160,0.35)",background:"rgba(243,160,160,0.12)",color:"#f3a0a0",fontSize:10,cursor:backendCtl.busy || !backendCtl.online?"not-allowed":"pointer",opacity:backendCtl.busy || !backendCtl.online?0.55:1}}>Arrêter</button>
+                <button onClick={()=>controlBackend("restart")} disabled={backendCtl.busy || !backendCtl.online} style={{padding:"6px 4px",borderRadius:8,border:"1px solid rgba(120,196,255,0.35)",background:"rgba(120,196,255,0.12)",color:"#9ed2ff",fontSize:10,cursor:backendCtl.busy || !backendCtl.online?"not-allowed":"pointer",opacity:backendCtl.busy || !backendCtl.online?0.55:1}}>Redém.</button>
+              </div>
+              <div style={{fontSize:9,color:"#98afc4",marginTop:6}}>
+                Uptime: {Math.floor((backendCtl.uptimeSec || 0) / 60)} min
+              </div>
+              {backendCtl.msg && <div style={{fontSize:9,color:"#cfe2f3",marginTop:4,lineHeight:1.35}}>{backendCtl.msg}</div>}
+            </div>
           </div>
         </nav>
 
