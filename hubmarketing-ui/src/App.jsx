@@ -129,19 +129,23 @@ function mapPrestaProducts(
   psCombinations = [],
   sageProducts = [],
   sageStock = [],
+  sageSales = [],
+  psOrders = [],
   taxRateMap = {},
   categoryMap = {},
   supplierMap = {}
 ) {
   const comboRefsByProduct = new Map();
+  const comboQtyByProduct = new Map();
   psCombinations.forEach(c => {
     const pid = toNum(c.id_product);
     if (!pid) return;
     const ref = String(c.reference || "").trim();
-    if (!ref) return;
+    const qty = Math.max(0, toNum(c.quantity || 0));
     const arr = comboRefsByProduct.get(pid) || [];
-    if (!arr.includes(ref)) arr.push(ref);
+    if (ref && !arr.includes(ref)) arr.push(ref);
     comboRefsByProduct.set(pid, arr);
+    comboQtyByProduct.set(pid, (comboQtyByProduct.get(pid) || 0) + qty);
   });
 
   const sageByRef = new Map();
@@ -154,6 +158,27 @@ function mapPrestaProducts(
     const ref = String(r.AR_Ref || r.Reference || r.reference || "").trim().toUpperCase();
     if (ref) stockByRef.set(ref, r);
   });
+  const salesByRef = new Map();
+  const addSale = (ref, qty) => {
+    const key = String(ref || "").trim().toUpperCase();
+    if (!key) return;
+    salesByRef.set(key, (salesByRef.get(key) || 0) + Math.max(0, toNum(qty)));
+  };
+  sageSales.forEach(r => {
+    const ref = r.AR_Ref || r.Reference || r.reference || r.DL_Ref || r.DO_Ref || "";
+    const qty = pickFirstNum(r, ["DL_Qte", "DO_Qte", "Quantite", "Qte", "quantity", "QTY", "QteLivree"]);
+    addSale(ref, qty || 0);
+  });
+  psOrders.forEach(o => {
+    const rows = o?.associations?.order_rows?.order_row;
+    const arr = Array.isArray(rows) ? rows : rows ? [rows] : [];
+    arr.forEach(r => {
+      const ref = r.product_reference || r.reference || "";
+      const qty = toNum(r.product_quantity || r.quantity || 0);
+      addSale(ref, qty);
+    });
+  });
+  const stockQtyFromRow = row => pickFirstNum(row, ["AS_QteSto", "QteStock", "STK_Real", "STK_Reel", "Quantity", "quantity", "Qte", "Stock"]);
 
   return psProducts.slice(0, 3000).map((p, idx) => {
     const id = toNum(p.id) || idx + 1;
@@ -172,7 +197,7 @@ function mapPrestaProducts(
       0;
     const priceTtc = Math.max(0, Math.round(priceHt * (1 + taxRate / 100)));
 
-    const stock = Math.max(0, toNum(p.quantity || 0));
+    const stockFromPresta = Math.max(0, toNum(p.quantity || 0));
     const createdAt = String(p.date_add || new Date().toISOString()).slice(0, 10);
     const refs = [String(p.reference || "").trim(), ...(comboRefsByProduct.get(id) || [])]
       .filter(Boolean)
@@ -184,11 +209,17 @@ function mapPrestaProducts(
       || pickFirstNum(stockRow, ["CMUP", "cmup", "PMP", "pmp", "STK_CMP", "PRMP"]);
     const priceHtSage = pickFirstNum(sageRow, ["AR_PrixVen", "AR_PrixVente", "PV_HT", "PrixHT"]);
     const finalPriceHt = priceHtSage > 0 ? priceHtSage : priceHt;
+    const variantRefs = comboRefsByProduct.get(id) || [];
+    const stockFromComb = comboQtyByProduct.get(id) || 0;
+    const stockFromSage = refs.reduce((sum, r) => sum + stockQtyFromRow(stockByRef.get(r)), 0);
+    const stock = Math.max(0, Math.round(Math.max(stockFromPresta, stockFromComb, stockFromSage)));
+    const refsForSales = [...new Set(refs)];
+    const sales = Math.round(refsForSales.reduce((sum, r) => sum + (salesByRef.get(r) || 0), 0));
 
     return {
       id,
       ref: String(p.reference || "").trim() || `REF-${id}`,
-      variantRefs: (comboRefsByProduct.get(id) || []).join(" "),
+      variantRefs: variantRefs.join(" "),
       name,
       stock,
       stockMin: Math.max(1, Math.min(8, Math.ceil(Math.max(1, stock * 0.2)))),
@@ -203,7 +234,7 @@ function mapPrestaProducts(
       category,
       sage: true,
       presta: true,
-      sales: 0,
+      sales,
       daysInStock: daysSince(createdAt),
       isNew: daysSince(createdAt) <= 45,
       weight: `${toNum(p.weight || 0)}kg`,
@@ -1214,13 +1245,15 @@ export default function App() {
   const syncLiveData = useCallback(async () => {
     setSyncState(prev => ({ ...prev, loading: true, error: "" }));
     try {
-      const [sageHealth, psHealth, psProductsRes, psCombRes, sageProductsRes, sageStockRes, taxRatesRes, categoriesRes, suppliersRes] = await Promise.all([
+      const [sageHealth, psHealth, psProductsRes, psCombRes, sageProductsRes, sageStockRes, sageSalesRes, psOrdersRes, taxRatesRes, categoriesRes, suppliersRes] = await Promise.all([
         fetch(`${API_BASE}/sage/health`).then(r => r.json()).catch(() => ({ ok: false })),
         fetch(`${API_BASE}/prestashop/health`).then(r => r.json()).catch(() => ({ ok: false })),
         fetch(`${API_BASE}/prestashop/products?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/prestashop/combinations?limit=6000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/sage/products?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/sage/stock?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
+        fetch(`${API_BASE}/sage/sales?limit=10000`).then(r => r.json()).catch(() => ({ rows: [] })),
+        fetch(`${API_BASE}/prestashop/orders?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/prestashop/tax-rates?limit=5000`).then(r => r.json()).catch(() => ({ map: {} })),
         fetch(`${API_BASE}/prestashop/categories?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/prestashop/suppliers?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
@@ -1240,6 +1273,8 @@ export default function App() {
         psCombRes.rows || [],
         sageProductsRes.rows || [],
         sageStockRes.rows || [],
+        sageSalesRes.rows || [],
+        psOrdersRes.rows || [],
         taxRatesRes.map || {},
         categoryMap,
         supplierMap
