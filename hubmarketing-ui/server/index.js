@@ -260,6 +260,38 @@ app.get('/api/prestashop/currencies', async (req, res) => {
   }
 });
 
+app.get('/api/prestashop/categories', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 2000), 10000);
+    const data = await psGet('categories', {
+      output_format: 'JSON',
+      display: 'full',
+      limit: `0,${limit}`,
+      sort: '[id_ASC]',
+    });
+    const rows = toArray(data?.prestashop?.categories?.category || data?.categories || []);
+    res.json({ ok: true, count: rows.length, rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
+  }
+});
+
+app.get('/api/prestashop/suppliers', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 1000), 5000);
+    const data = await psGet('suppliers', {
+      output_format: 'JSON',
+      display: 'full',
+      limit: `0,${limit}`,
+      sort: '[id_ASC]',
+    });
+    const rows = toArray(data?.prestashop?.suppliers?.supplier || data?.suppliers || []);
+    res.json({ ok: true, count: rows.length, rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
+  }
+});
+
 app.get('/api/prestashop/image/:productId/:imageId', async (req, res) => {
   try {
     if (!PS_API_KEY) throw new Error('PS_API_KEY is missing');
@@ -307,7 +339,7 @@ app.get('/api/prestashop/tax-rates', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 5000), 20000);
     const [taxRulesRes, taxRatesRes] = await Promise.all([
-      psGet('tax_rule', {
+      psGet('tax_rules', {
         output_format: 'JSON',
         display: 'full',
         limit: `0,${limit}`,

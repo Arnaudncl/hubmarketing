@@ -74,6 +74,7 @@ const CAT_ICONS = {
 };
 const API_BASE = "http://127.0.0.1:4000/api";
 const SUPERVISOR_BASE = "http://127.0.0.1:4010/api/supervisor";
+const STORE_BASE = "https://www.house-store.com";
 const CURRENCY = "XPF";
 
 const toNum = v => {
@@ -105,7 +106,33 @@ const pickFirstNum = (obj, keys = []) => {
   return 0;
 };
 
-function mapPrestaProducts(psProducts = [], psCombinations = [], sageProducts = [], sageStock = [], taxRateMap = {}) {
+const readLocalized = value => {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const first = value.find(v => typeof v === "string") || value.find(v => v?.value) || value[0];
+    if (typeof first === "string") return first;
+    if (first?.value) return String(first.value);
+  }
+  if (typeof value === "object") {
+    if (value.value) return String(value.value);
+    const vals = Object.values(value);
+    const first = vals.find(v => typeof v === "string" && v.trim()) || vals.find(v => v?.value);
+    if (typeof first === "string") return first;
+    if (first?.value) return String(first.value);
+  }
+  return String(value || "");
+};
+
+function mapPrestaProducts(
+  psProducts = [],
+  psCombinations = [],
+  sageProducts = [],
+  sageStock = [],
+  taxRateMap = {},
+  categoryMap = {},
+  supplierMap = {}
+) {
   const comboRefsByProduct = new Map();
   psCombinations.forEach(c => {
     const pid = toNum(c.id_product);
@@ -131,10 +158,12 @@ function mapPrestaProducts(psProducts = [], psCombinations = [], sageProducts = 
   return psProducts.slice(0, 3000).map((p, idx) => {
     const id = toNum(p.id) || idx + 1;
     const name = stripHtml(p.name || `Produit ${id}`);
-    const category = catFromPresta(p.id_category_default);
+    const category = categoryMap[String(p.id_category_default || "")] || catFromPresta(p.id_category_default);
     const imgs = p.associations?.images;
-    const imageId = Array.isArray(imgs) ? imgs[0]?.id : imgs?.id;
-    const imageUrl = imageId ? `${API_BASE}/prestashop/image/${id}/${imageId}` : null;
+    const imageId = (Array.isArray(imgs) ? imgs[0]?.id : imgs?.id) || p.id_default_image;
+    const imagePath = imageId ? String(imageId).split("").join("/") : "";
+    const imageUrl = imageId ? `${STORE_BASE}/img/p/${imagePath}/${imageId}.jpg` : null;
+    const imageProxyUrl = imageId ? `${API_BASE}/prestashop/image/${id}/${imageId}` : null;
 
     const priceHt = Math.max(0, toNum(p.price || 0));
     const taxRate =
@@ -170,6 +199,7 @@ function mapPrestaProducts(psProducts = [], psCombinations = [], sageProducts = 
       cmup: cmup || null,
       image: CAT_ICONS[category] || "ðŸ“¦",
       imageUrl,
+      imageProxyUrl,
       category,
       sage: true,
       presta: true,
@@ -178,7 +208,9 @@ function mapPrestaProducts(psProducts = [], psCombinations = [], sageProducts = 
       isNew: daysSince(createdAt) <= 45,
       weight: `${toNum(p.weight || 0)}kg`,
       dimensions: `${toNum(p.width || 0)}x${toNum(p.depth || 0)}x${toNum(p.height || 0)}cm`,
-      supplier: p.id_supplier ? `Supplier #${p.id_supplier}` : "N/A",
+      supplier: supplierMap[String(p.id_supplier || "")] || (p.id_supplier ? `Supplier #${p.id_supplier}` : "N/A"),
+      productUrl: `${STORE_BASE}/index.php?id_product=${id}&controller=product`,
+      productSlug: readLocalized(p.link_rewrite),
       description: stripHtml(p.description_short || p.description || "Fiche synchronisÃ©e depuis PrestaShop."),
       createdAt,
     };
@@ -187,9 +219,9 @@ function mapPrestaProducts(psProducts = [], psCombinations = [], sageProducts = 
 
 const stockStatus = p => p.stock === 0 ? {label:"Rupture", c:T.red} : p.stock <= p.stockMin ? {label:"Critique", c:T.orange} : {label:"OK", c:T.green};
 const promoType = p => {
-  if (p.isNew) return {type:"new",  label:"NouveautÃ©",      c:T.blue,   desc:"Mise en avant homepage + rÃ©seaux sociaux"};
-  if (p.daysInStock > 180) return {type:"slow", label:"Rotation lente", c:T.orange, desc:"Remise de 20â€“30% recommandÃ©e"};
-  if (p.daysInStock > 90)  return {type:"med",  label:"Ã€ dynamiser",    c:T.gold,   desc:"Newsletter + offre groupÃ©e"};
+  if (p.isNew) return {type:"new",  label:"Nouveauté",      c:T.blue,   desc:"Mise en avant homepage + réseaux sociaux"};
+  if (p.daysInStock > 180) return {type:"slow", label:"Rotation lente", c:T.orange, desc:"Remise de 20-30% recommandée"};
+  if (p.daysInStock > 90)  return {type:"med",  label:"À dynamiser",    c:T.gold,   desc:"Newsletter + offre groupée"};
   if (p.stock === 0)       return {type:"rupt", label:"Rupture",        c:T.red,    desc:"Relancer commande fournisseur"};
   return null;
 };
@@ -241,17 +273,19 @@ const SectionTitle = ({children, sub}) => (
 );
 
 const ProductThumb = ({product, size=40}) => {
-  const [imgError, setImgError] = useState(false);
-  const showImage = !!product?.imageUrl && !imgError;
+  const [srcIndex, setSrcIndex] = useState(0);
+  const imageSources = [product?.imageUrl, product?.imageProxyUrl].filter(Boolean);
+  const src = imageSources[srcIndex];
+  const showImage = !!src;
   return (
     <div style={{width:size,height:size,borderRadius:10,background:T.panelRaised,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:Math.max(18, Math.floor(size*0.48)),flexShrink:0,overflow:"hidden"}}>
       {showImage ? (
         <img
-          src={product.imageUrl}
+          src={src}
           alt={mojibakeFix(product.name || "Produit")}
           style={{width:"100%",height:"100%",objectFit:"cover"}}
           loading="lazy"
-          onError={()=>setImgError(true)}
+          onError={()=>setSrcIndex(i => i + 1)}
         />
       ) : (
         product.image || "📦"
@@ -403,7 +437,10 @@ function ProductModal({product, onClose}) {
               <button style={{flex:1,padding:"12px",borderRadius:12,border:`1px solid ${T.borderWarm}`,cursor:"pointer",background:`linear-gradient(135deg,${T.bronze},${T.bronzeDark})`,color:"#fff",fontSize:13,fontWeight:700,fontFamily:"inherit"}}>
                 Modifier le produit
               </button>
-              <button style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,cursor:"pointer",background:"transparent",color:T.ivoryMuted,fontSize:13,fontFamily:"inherit"}}>↗</button>
+              <button
+                onClick={()=>product.productUrl && window.open(product.productUrl, "_blank", "noopener,noreferrer")}
+                style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,cursor:"pointer",background:"transparent",color:T.ivoryMuted,fontSize:13,fontFamily:"inherit"}}
+              >↗</button>
             </div>
           </div>
         </div>
@@ -534,11 +571,18 @@ function ProductsModule() {
                       </div>
                     </td>
                     <td style={{padding:"13px 14px"}}>
-                      <button onClick={e=>{e.stopPropagation();setModal(p);}} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,fontSize:10,cursor:"pointer",fontFamily:"inherit",letterSpacing:.3,transition:"all .15s"}}
-                        onMouseEnter={e=>{e.target.style.borderColor=T.bronze;e.target.style.color=T.bronze}}
-                        onMouseLeave={e=>{e.target.style.borderColor=T.border;e.target.style.color=T.ivoryMuted}}>
-                        Voir →
-                      </button>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={e=>{e.stopPropagation();setModal(p);}} style={{padding:"5px 12px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,fontSize:10,cursor:"pointer",fontFamily:"inherit",letterSpacing:.3,transition:"all .15s"}}
+                          onMouseEnter={e=>{e.target.style.borderColor=T.bronze;e.target.style.color=T.bronze}}
+                          onMouseLeave={e=>{e.target.style.borderColor=T.border;e.target.style.color=T.ivoryMuted}}>
+                          Voir
+                        </button>
+                        <button
+                          onClick={e=>{e.stopPropagation(); if (p.productUrl) window.open(p.productUrl, "_blank", "noopener,noreferrer");}}
+                          style={{padding:"5px 9px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}
+                          title="Ouvrir sur PrestaShop"
+                        >↗</button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1170,7 +1214,7 @@ export default function App() {
   const syncLiveData = useCallback(async () => {
     setSyncState(prev => ({ ...prev, loading: true, error: "" }));
     try {
-      const [sageHealth, psHealth, psProductsRes, psCombRes, sageProductsRes, sageStockRes, taxRatesRes] = await Promise.all([
+      const [sageHealth, psHealth, psProductsRes, psCombRes, sageProductsRes, sageStockRes, taxRatesRes, categoriesRes, suppliersRes] = await Promise.all([
         fetch(`${API_BASE}/sage/health`).then(r => r.json()).catch(() => ({ ok: false })),
         fetch(`${API_BASE}/prestashop/health`).then(r => r.json()).catch(() => ({ ok: false })),
         fetch(`${API_BASE}/prestashop/products?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
@@ -1178,14 +1222,27 @@ export default function App() {
         fetch(`${API_BASE}/sage/products?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/sage/stock?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/prestashop/tax-rates?limit=5000`).then(r => r.json()).catch(() => ({ map: {} })),
+        fetch(`${API_BASE}/prestashop/categories?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
+        fetch(`${API_BASE}/prestashop/suppliers?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
       ]);
+
+      const categoryMap = {};
+      (categoriesRes.rows || []).forEach(c => {
+        categoryMap[String(c.id)] = mojibakeFix(readLocalized(c.name)) || `Catégorie #${c.id}`;
+      });
+      const supplierMap = {};
+      (suppliersRes.rows || []).forEach(s => {
+        supplierMap[String(s.id)] = mojibakeFix(readLocalized(s.name)) || `Supplier #${s.id}`;
+      });
 
       const liveProducts = mapPrestaProducts(
         psProductsRes.rows || [],
         psCombRes.rows || [],
         sageProductsRes.rows || [],
         sageStockRes.rows || [],
-        taxRatesRes.map || {}
+        taxRatesRes.map || {},
+        categoryMap,
+        supplierMap
       );
 
       if (liveProducts.length > 0) {
