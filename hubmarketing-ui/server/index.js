@@ -292,6 +292,38 @@ app.get('/api/prestashop/suppliers', async (req, res) => {
   }
 });
 
+app.get('/api/prestashop/product-option-values', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 5000), 20000);
+    const data = await psGet('product_option_values', {
+      output_format: 'JSON',
+      display: 'full',
+      limit: `0,${limit}`,
+      sort: '[id_ASC]',
+    });
+    const rows = toArray(data?.prestashop?.product_option_values?.product_option_value || data?.product_option_values || []);
+    res.json({ ok: true, count: rows.length, rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
+  }
+});
+
+app.get('/api/prestashop/stock-availables', async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit || 10000), 50000);
+    const data = await psGet('stock_availables', {
+      output_format: 'JSON',
+      display: 'full',
+      limit: `0,${limit}`,
+      sort: '[id_ASC]',
+    });
+    const rows = toArray(data?.prestashop?.stock_availables?.stock_available || data?.stock_availables || []);
+    res.json({ ok: true, count: rows.length, rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
+  }
+});
+
 app.get('/api/prestashop/image/:productId/:imageId', async (req, res) => {
   try {
     if (!PS_API_KEY) throw new Error('PS_API_KEY is missing');

@@ -12,3 +12,4 @@ hubmarketing-ui/node_modules/
 hubmarketing-ui/dist/
 hubmarketing-ui/server/node_modules/
 hubmarketing-ui/server/.env
+backups/

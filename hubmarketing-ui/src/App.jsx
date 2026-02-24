@@ -63,14 +63,14 @@ const SALES = [
 ];
 const CATS = ["Canapés","Tables","Literie","Rangement","Fauteuils","Chaises","Luminaires","Décoration"];
 const CAT_ICONS = {
-  "Canapés":"🛋️",
-  "Tables":"🍽️",
-  "Literie":"🛏️",
-  "Rangement":"🗄️",
-  "Fauteuils":"💺",
-  "Chaises":"🪑",
-  "Luminaires":"💡",
-  "Décoration":"🪞",
+  "Canapés":"CAN",
+  "Tables":"TAB",
+  "Literie":"LIT",
+  "Rangement":"RAN",
+  "Fauteuils":"FAU",
+  "Chaises":"CHA",
+  "Luminaires":"LUM",
+  "Décoration":"DEC",
 };
 const API_BASE = "http://127.0.0.1:4000/api";
 const SUPERVISOR_BASE = "http://127.0.0.1:4010/api/supervisor";
@@ -127,21 +127,40 @@ const readLocalized = value => {
 function mapPrestaProducts(
   psProducts = [],
   psCombinations = [],
+  psStockAvailables = [],
   sageProducts = [],
   sageStock = [],
   sageSales = [],
   psOrders = [],
   taxRateMap = {},
   categoryMap = {},
-  supplierMap = {}
+  supplierMap = {},
+  optionValueMap = {}
 ) {
+  const comboById = new Map();
   const comboRefsByProduct = new Map();
   const comboQtyByProduct = new Map();
+  const stockAvailByCombo = new Map();
+  const stockAvailByProduct = new Map();
+
+  psStockAvailables.forEach(s => {
+    const qty = Math.max(0, toNum(s.quantity || 0));
+    const comboId = toNum(s.id_product_attribute || 0);
+    const pid = toNum(s.id_product || 0);
+    if (comboId > 0) {
+      stockAvailByCombo.set(comboId, Math.max(stockAvailByCombo.get(comboId) || 0, qty));
+    } else if (pid > 0) {
+      stockAvailByProduct.set(pid, Math.max(stockAvailByProduct.get(pid) || 0, qty));
+    }
+  });
+
   psCombinations.forEach(c => {
     const pid = toNum(c.id_product);
     if (!pid) return;
+    comboById.set(String(c.id), c);
     const ref = String(c.reference || "").trim();
-    const qty = Math.max(0, toNum(c.quantity || 0));
+    const cid = toNum(c.id);
+    const qty = Math.max(0, Math.max(toNum(c.quantity || 0), stockAvailByCombo.get(cid) || 0));
     const arr = comboRefsByProduct.get(pid) || [];
     if (ref && !arr.includes(ref)) arr.push(ref);
     comboRefsByProduct.set(pid, arr);
@@ -173,7 +192,9 @@ function mapPrestaProducts(
     const rows = o?.associations?.order_rows?.order_row;
     const arr = Array.isArray(rows) ? rows : rows ? [rows] : [];
     arr.forEach(r => {
-      const ref = r.product_reference || r.reference || "";
+      const attrId = String(r.product_attribute_id || r.id_product_attribute || "").trim();
+      const comboRef = attrId ? String(comboById.get(attrId)?.reference || "").trim() : "";
+      const ref = comboRef || r.product_reference || r.reference || "";
       const qty = toNum(r.product_quantity || r.quantity || 0);
       addSale(ref, qty);
     });
@@ -197,7 +218,7 @@ function mapPrestaProducts(
       0;
     const priceTtc = Math.max(0, Math.round(priceHt * (1 + taxRate / 100)));
 
-    const stockFromPresta = Math.max(0, toNum(p.quantity || 0));
+    const stockFromPresta = Math.max(0, Math.max(toNum(p.quantity || 0), stockAvailByProduct.get(id) || 0));
     const createdAt = String(p.date_add || new Date().toISOString()).slice(0, 10);
     const refs = [String(p.reference || "").trim(), ...(comboRefsByProduct.get(id) || [])]
       .filter(Boolean)
@@ -210,25 +231,75 @@ function mapPrestaProducts(
     const priceHtSage = pickFirstNum(sageRow, ["AR_PrixVen", "AR_PrixVente", "PV_HT", "PrixHT"]);
     const finalPriceHt = priceHtSage > 0 ? priceHtSage : priceHt;
     const variantRefs = comboRefsByProduct.get(id) || [];
+    const combosForProduct = psCombinations.filter(c => toNum(c.id_product) === id);
+    const toUpper = v => String(v || "").trim().toUpperCase();
+    const pickSageTTC = row => pickFirstNum(row, ["AR_PrixVen", "AR_PrixVente", "PV_TTC", "PrixTTC", "PriceTTC"]);
+    const variations = combosForProduct.map(c => {
+      const cref = String(c.reference || "").trim();
+      const crefU = toUpper(cref);
+      const optValsRaw = c.associations?.product_option_values?.product_option_value;
+      const optVals = Array.isArray(optValsRaw) ? optValsRaw : (optValsRaw ? [optValsRaw] : []);
+      const optionLabel = optVals
+        .map(v => optionValueMap[String(v.id || v)] || "")
+        .filter(Boolean)
+        .join(" / ");
+      const priceImpactHt = toNum(c.price || 0);
+      const comboHt = Math.max(0, priceHt + priceImpactHt);
+      const comboTtc = Math.max(0, Math.round(comboHt * (1 + taxRate / 100)));
+      const sageCombo = sageByRef.get(crefU) || null;
+      const sageComboTtc = pickSageTTC(sageCombo) || 0;
+      const stockComboPresta = Math.max(0, Math.max(toNum(c.quantity || 0), stockAvailByCombo.get(toNum(c.id)) || 0));
+      const stockComboSage = stockQtyFromRow(stockByRef.get(crefU));
+      const stockCombo = Math.max(stockComboPresta, stockComboSage);
+      const salesCombo = salesByRef.get(crefU) || 0;
+      return {
+        id: toNum(c.id),
+        ref: cref,
+        label: optionLabel || cref || `Déclinaison #${c.id}`,
+        priceTtc: comboTtc,
+        priceHt: comboHt,
+        stock: stockCombo,
+        sales: Math.round(salesCombo),
+        sageTtc: sageComboTtc || null,
+        ttcMatch: sageComboTtc > 0 ? Math.abs(sageComboTtc - comboTtc) <= 1 : null,
+      };
+    });
     const stockFromComb = comboQtyByProduct.get(id) || 0;
+    const stockFromVariants = variations.reduce((sum, v) => sum + Math.max(0, toNum(v.stock || 0)), 0);
     const stockFromSage = refs.reduce((sum, r) => sum + stockQtyFromRow(stockByRef.get(r)), 0);
-    const stock = Math.max(0, Math.round(Math.max(stockFromPresta, stockFromComb, stockFromSage)));
+    const stock = Math.max(
+      0,
+      Math.round(
+        Math.max(
+          stockFromPresta,
+          stockFromComb,
+          stockFromSage,
+          variations.length > 0 ? stockFromVariants : 0
+        )
+      )
+    );
     const refsForSales = [...new Set(refs)];
     const sales = Math.round(refsForSales.reduce((sum, r) => sum + (salesByRef.get(r) || 0), 0));
 
+    const refParent = String(p.reference || "").trim() || `REF-${id}`;
+    const priceSageTtc = pickSageTTC(sageRow) || null;
     return {
       id,
-      ref: String(p.reference || "").trim() || `REF-${id}`,
+      ref: refParent,
+      displayRef: variantRefs.length > 0 ? "" : refParent,
       variantRefs: variantRefs.join(" "),
+      hasVariants: variations.length > 0,
+      variations,
       name,
       stock,
       stockMin: Math.max(1, Math.min(8, Math.ceil(Math.max(1, stock * 0.2)))),
       price: Math.round(finalPriceHt),
       priceShop: priceTtc,
       priceTTC: priceTtc,
+      priceSageTtc,
       taxRate,
       cmup: cmup || null,
-      image: CAT_ICONS[category] || "ðŸ“¦",
+      image: CAT_ICONS[category] || "PRD",
       imageUrl,
       imageProxyUrl,
       category,
@@ -242,7 +313,7 @@ function mapPrestaProducts(
       supplier: supplierMap[String(p.id_supplier || "")] || (p.id_supplier ? `Supplier #${p.id_supplier}` : "N/A"),
       productUrl: `${STORE_BASE}/index.php?id_product=${id}&controller=product`,
       productSlug: readLocalized(p.link_rewrite),
-      description: stripHtml(p.description_short || p.description || "Fiche synchronisÃ©e depuis PrestaShop."),
+      description: stripHtml(p.description_short || p.description || "Fiche synchronisée depuis PrestaShop."),
       createdAt,
     };
   });
@@ -331,6 +402,7 @@ function ProductModal({product, onClose}) {
   const ss    = stockStatus(product);
   const margin = (((product.priceShop - product.price) / product.price)*100).toFixed(0);
   const vm = product.sales / Math.max(1, Math.floor(product.daysInStock/30));
+  const variantMismatchCount = (product.variations || []).filter(v => v.ttcMatch === false).length;
 
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(10,9,8,0.85)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:24,backdropFilter:"blur(12px)"}}>
@@ -350,7 +422,7 @@ function ProductModal({product, onClose}) {
               {product.isNew && <span style={{background:T.blue+"22",color:T.blueLight,fontSize:9,fontWeight:700,padding:"3px 10px",borderRadius:20,border:`1px solid ${T.blue}44`,letterSpacing:1,textTransform:"uppercase"}}>Nouveau</span>}
             </div>
             <div style={{fontSize:12,color:T.ivoryMuted,marginBottom:12,display:"flex",gap:10,flexWrap:"wrap"}}>
-              <span style={{fontFamily:"'DM Mono',monospace",color:T.bronze,fontSize:11}}>{mojibakeFix(product.ref)}</span>
+              <span style={{fontFamily:"'DM Mono',monospace",color:T.bronze,fontSize:11}}>{product.displayRef ? mojibakeFix(product.displayRef) : "—"}</span>
               <span style={{color:T.ivoryDeep}}>·</span>
               <span>{CAT_ICONS[mojibakeFix(product.category)] || "📦"} {mojibakeFix(product.category)}</span>
               <span style={{color:T.ivoryDeep}}>·</span>
@@ -367,7 +439,7 @@ function ProductModal({product, onClose}) {
             {/* KPIs */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
               {[
-                {l:"Prix Sage HT",    v:money(product.price), c:T.ink},
+                {l:"Prix Sage",       v:money(product.priceSageTtc || product.price), c:T.ink},
                 {l:"Prix Boutique",   v:money(product.priceShop), c:T.bronze},
                 {l:"Marge brute",     v:"+"+margin+"%",    c:T.green},
                 {l:"Ventes totales",  v:product.sales+" u.", c:T.gold},
@@ -378,6 +450,13 @@ function ProductModal({product, onClose}) {
                 </div>
               ))}
             </div>
+            {product.hasVariants && (
+              <div style={{fontSize:11,color:variantMismatchCount > 0 ? T.red : T.green}}>
+                {variantMismatchCount > 0
+                  ? `${variantMismatchCount} déclinaison(s) avec écart TTC Sage/Presta`
+                  : "TTC Sage et Presta alignés sur les déclinaisons connues"}
+              </div>
+            )}
 
             {/* Specs */}
             <div style={{background:T.panel,borderRadius:14,padding:18,border:`1px solid ${T.border}`}}>
@@ -456,7 +535,7 @@ function ProductModal({product, onClose}) {
             {promo && (
               <div style={{background:promo.c+"10",border:`1px solid ${promo.c}30`,borderRadius:14,padding:18}}>
                 <div style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:16,fontWeight:600,color:promo.c,marginBottom:6}}>{promo.label}</div>
-                <div style={{fontSize:12,color:T.inkDim,lineHeight:1.55,marginBottom:14}}>{promo.desc}</div>
+                <div style={{fontSize:12,color:T.inkDim,lineHeight:1.55,marginBottom:14}}>{mojibakeFix(promo.desc)}</div>
                 <div style={{display:"flex",gap:8}}>
                   <button style={{flex:1,padding:"9px",borderRadius:10,border:"none",cursor:"pointer",background:promo.c,color:"#fff",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>Créer une campagne</button>
                   <button style={{padding:"9px 14px",borderRadius:10,border:`1px solid ${promo.c}44`,cursor:"pointer",background:"transparent",color:promo.c,fontSize:12,fontFamily:"inherit"}}>Studio →</button>
@@ -473,6 +552,35 @@ function ProductModal({product, onClose}) {
                 style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,cursor:"pointer",background:"transparent",color:T.ivoryMuted,fontSize:13,fontFamily:"inherit"}}
               >↗</button>
             </div>
+
+            {product.hasVariants && (
+              <div style={{background:T.panel,borderRadius:14,padding:18,border:`1px solid ${T.border}`}}>
+                <div style={{fontSize:9,color:T.ivoryMuted,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:1.5}}>Déclinaisons</div>
+                <div style={{maxHeight:180,overflow:"auto",border:`1px solid ${T.border}`,borderRadius:10}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead>
+                      <tr style={{background:T.panelRaised}}>
+                        {["Déclinaison","Réf.","Stock","TTC Presta","TTC Sage","OK"].map(h=>(
+                          <th key={h} style={{textAlign:"left",padding:"7px 8px",color:T.ivoryMuted,fontSize:9,textTransform:"uppercase",letterSpacing:1}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(product.variations || []).map(v=>(
+                        <tr key={v.id} style={{borderTop:`1px solid ${T.border}`}}>
+                          <td style={{padding:"7px 8px"}}>{mojibakeFix(v.label)}</td>
+                          <td style={{padding:"7px 8px",fontFamily:"'DM Mono',monospace"}}>{v.ref || "—"}</td>
+                          <td style={{padding:"7px 8px"}}>{v.stock}</td>
+                          <td style={{padding:"7px 8px"}}>{money(v.priceTtc)}</td>
+                          <td style={{padding:"7px 8px"}}>{v.sageTtc ? money(v.sageTtc) : "N/A"}</td>
+                          <td style={{padding:"7px 8px"}}>{v.ttcMatch === null ? "—" : (v.ttcMatch ? "✅" : "⚠")}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -491,7 +599,7 @@ function ProductsModule() {
   const filtered = PRODUCTS.filter(p =>
     (filter==="all" || (filter==="sync"&&p.sage&&p.presta) || (filter==="unsync"&&(!p.sage||!p.presta)) || (filter==="rupture"&&p.stock===0) || (filter==="new"&&p.isNew) || (filter==="slow"&&p.daysInStock>150))
     && (cat==="all" || p.category===cat)
-    && [p.name,p.ref,p.category,p.supplier||""].some(s=>s.toLowerCase().includes(search.toLowerCase()))
+    && [p.name,p.ref,p.variantRefs || "",p.category,p.supplier||""].some(s=>String(s).toLowerCase().includes(search.toLowerCase()))
   ).sort((a,b)=>({name:a.name.localeCompare(b.name),stock:a.stock-b.stock,price:b.priceShop-a.priceShop,sales:b.sales-a.sales,days:b.daysInStock-a.daysInStock}[sort]||0));
 
   const STATUS = [
@@ -575,7 +683,7 @@ function ProductsModule() {
                         </div>
                       </div>
                     </td>
-                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:10,color:T.bronze}}>{mojibakeFix(p.ref)}</td>
+                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:10,color:T.bronze}}>{p.displayRef ? mojibakeFix(p.displayRef) : "—"}</td>
                     <td style={{padding:"13px 14px"}}>
                       <span style={{background:T.panelRaised,borderRadius:6,padding:"3px 8px",fontSize:10,color:T.ivoryMuted}}>{CAT_ICONS[mojibakeFix(p.category)] || "📦"} {mojibakeFix(p.category)}</span>
                     </td>
@@ -1189,11 +1297,11 @@ function AssistantModule() {
 
 /* â”€â”€â”€ MAIN APP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const MODULES = [
-  {id:"products",  icon:"ðŸ“¦",  label:"Catalogue",           color:T.bronze},
-  {id:"images",    icon:"ðŸ–¼ï¸",  label:"Images",              color:T.blue},
-  {id:"reporting", icon:"ðŸ“Š",  label:"Stats & Promotions",  color:T.green},
-  {id:"studio",    icon:"ðŸŽ¨",  label:"Studio",              color:T.gold},
-  {id:"assistant", icon:"ðŸ¤–",  label:"Assistant",           color:T.ivoryDim},
+  {id:"products",  icon:"CAT", label:"Catalogue",          color:T.bronze},
+  {id:"images",    icon:"IMG", label:"Images",             color:T.blue},
+  {id:"reporting", icon:"RPT", label:"Stats & Promotions", color:T.green},
+  {id:"studio",    icon:"STD", label:"Studio",             color:T.gold},
+  {id:"assistant", icon:"BOT", label:"Assistant",          color:T.ivoryDim},
 ];
 
 export default function App() {
@@ -1246,11 +1354,12 @@ export default function App() {
   const syncLiveData = useCallback(async () => {
     setSyncState(prev => ({ ...prev, loading: true, error: "" }));
     try {
-      const [sageHealth, psHealth, psProductsRes, psCombRes, sageProductsRes, sageStockRes, sageSalesRes, psOrdersRes, taxRatesRes, categoriesRes, suppliersRes] = await Promise.all([
+      const [sageHealth, psHealth, psProductsRes, psCombRes, psStockAvailRes, sageProductsRes, sageStockRes, sageSalesRes, psOrdersRes, taxRatesRes, categoriesRes, suppliersRes, povRes] = await Promise.all([
         fetch(`${API_BASE}/sage/health`).then(r => r.json()).catch(() => ({ ok: false })),
         fetch(`${API_BASE}/prestashop/health`).then(r => r.json()).catch(() => ({ ok: false })),
         fetch(`${API_BASE}/prestashop/products?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/prestashop/combinations?limit=6000`).then(r => r.json()).catch(() => ({ rows: [] })),
+        fetch(`${API_BASE}/prestashop/stock-availables?limit=20000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/sage/products?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/sage/stock?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/sage/sales?limit=10000`).then(r => r.json()).catch(() => ({ rows: [] })),
@@ -1258,6 +1367,7 @@ export default function App() {
         fetch(`${API_BASE}/prestashop/tax-rates?limit=5000`).then(r => r.json()).catch(() => ({ map: {} })),
         fetch(`${API_BASE}/prestashop/categories?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
         fetch(`${API_BASE}/prestashop/suppliers?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
+        fetch(`${API_BASE}/prestashop/product-option-values?limit=10000`).then(r => r.json()).catch(() => ({ rows: [] })),
       ]);
 
       const categoryMap = {};
@@ -1268,17 +1378,23 @@ export default function App() {
       (suppliersRes.rows || []).forEach(s => {
         supplierMap[String(s.id)] = mojibakeFix(readLocalized(s.name)) || `Supplier #${s.id}`;
       });
+      const optionValueMap = {};
+      (povRes.rows || []).forEach(v => {
+        optionValueMap[String(v.id)] = mojibakeFix(readLocalized(v.name)) || `Option #${v.id}`;
+      });
 
       const liveProducts = mapPrestaProducts(
         psProductsRes.rows || [],
         psCombRes.rows || [],
+        psStockAvailRes.rows || [],
         sageProductsRes.rows || [],
         sageStockRes.rows || [],
         sageSalesRes.rows || [],
         psOrdersRes.rows || [],
         taxRatesRes.map || {},
         categoryMap,
-        supplierMap
+        supplierMap,
+        optionValueMap
       );
 
       if (liveProducts.length > 0) {

@@ -8,6 +8,11 @@ start "HubMarketing Supervisor" cmd /k "cd /d ""%ROOT%hubmarketing-ui\server"" &
 
 timeout /t 2 /nobreak >nul
 
+echo [HubMarketing] Demarrage du backend via superviseur...
+powershell -NoProfile -Command "try { Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:4010/api/supervisor/start' -TimeoutSec 8 ^| Out-Null } catch { }"
+
+timeout /t 1 /nobreak >nul
+
 echo [HubMarketing] Demarrage du front...
 start "HubMarketing UI" cmd /k "cd /d ""%ROOT%hubmarketing-ui"" && npm run dev"
 
