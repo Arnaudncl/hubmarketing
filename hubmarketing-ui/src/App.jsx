@@ -1199,6 +1199,7 @@ const MODULES = [
 export default function App() {
   const [active,setActive] = useState("products");
   const [, setVersion] = useState(0);
+  const [hasLiveData, setHasLiveData] = useState(false);
   const [syncState, setSyncState] = useState({
     loading: false,
     lastSync: null,
@@ -1282,6 +1283,10 @@ export default function App() {
 
       if (liveProducts.length > 0) {
         PRODUCTS.splice(0, PRODUCTS.length, ...liveProducts);
+        setHasLiveData(true);
+      } else {
+        PRODUCTS.splice(0, PRODUCTS.length);
+        setHasLiveData(false);
       }
 
       setVersion(v => v + 1);
@@ -1292,10 +1297,13 @@ export default function App() {
         status: { sage: !!sageHealth.ok, presta: !!psHealth.ok },
       });
     } catch (e) {
+      PRODUCTS.splice(0, PRODUCTS.length);
+      setHasLiveData(false);
+      setVersion(v => v + 1);
       setSyncState(prev => ({
         ...prev,
         loading: false,
-        error: e.message || "Erreur de synchronisation",
+        error: (e.message || "Erreur de synchronisation") + " (données live indisponibles)",
       }));
     }
   }, []);
@@ -1425,7 +1433,12 @@ export default function App() {
         {/* â”€â”€ CONTENT â”€â”€ */}
         <main style={{flex:1,overflow:active==="studio"?"hidden":"auto",display:"flex",flexDirection:"column"}}>
           <div style={{flex:1,overflow:active==="studio"?"hidden":"auto",animation:"fadeIn .3s ease"}} key={`${active}-${PRODUCTS.length}`}>
-            {CONTENT[active]}
+            {hasLiveData ? CONTENT[active] : (
+              <div style={{padding:"36px 32px",color:T.ink}}>
+                <h2 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:24,margin:"0 0 8px"}}>Données live non chargées</h2>
+                <p style={{fontSize:13,color:T.ivoryMuted,margin:0}}>Clique sur <b>↻ Forcer la synchro</b> après avoir démarré le backend/superviseur. Aucune donnée démo n'est affichée.</p>
+              </div>
+            )}
           </div>
         </main>
       </div>
