@@ -8,19 +8,14 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $projectRoot
 
-function Run-Git([string]$args) {
-  $output = & git $args 2>&1
-  return $output
-}
-
 try {
-  $null = Run-Git "--version"
+  $null = & git --version
 } catch {
   throw "Git n'est pas disponible dans le PATH."
 }
 
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-$branch = (Run-Git "branch --show-current" | Out-String).Trim()
+$branch = (& git branch --show-current | Out-String).Trim()
 if (-not $branch) { $branch = "master" }
 $shouldPush = if ($PSBoundParameters.ContainsKey("Push")) { $Push.IsPresent } else { $true }
 
