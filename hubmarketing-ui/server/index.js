@@ -28,6 +28,7 @@ const dbConfig = {
 const TABLE_PRODUCTS = process.env.SAGE_TABLE_PRODUCTS || 'F_ARTICLE';
 const TABLE_STOCK = process.env.SAGE_TABLE_STOCK || 'F_STOCK';
 const TABLE_SALES_LINES = process.env.SAGE_TABLE_SALES_LINES || 'F_DOCLIGNE';
+const SAGE_SALES_FILTER = process.env.SAGE_SALES_FILTER || '(DO_Domaine = 0 AND DO_Type = 7)';
 
 const PS_BASE_URL = (process.env.PS_BASE_URL || 'https://www.house-store.com/api').replace(/\/+$/, '');
 const PS_API_KEY = process.env.PS_API_KEY || '';
@@ -191,9 +192,48 @@ app.get('/api/sage/stock', async (req, res) => {
 
 app.get('/api/sage/sales', async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 500), 2000);
-    const rows = await runQuery(`SELECT TOP (${limit}) * FROM ${TABLE_SALES_LINES} ORDER BY 1 DESC`);
+    const limit = Math.min(Number(req.query.limit || 20000), 200000);
+    const rows = await runQuery(`
+      SELECT TOP (${limit}) *
+      FROM ${TABLE_SALES_LINES}
+      WHERE ISNULL(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64)))), '') <> ''
+        AND ${SAGE_SALES_FILTER}
+      ORDER BY cbModification DESC, DO_Date DESC, DL_No DESC
+    `);
     res.json({ ok: true, count: rows.length, rows });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'sage', message: error.message });
+  }
+});
+
+app.post('/api/sage/sales-by-refs', async (req, res) => {
+  try {
+    const refsRaw = Array.isArray(req.body?.refs) ? req.body.refs : [];
+    const refs = [...new Set(refsRaw.map(r => String(r || '').trim().toUpperCase()).filter(Boolean))].slice(0, 5000);
+    if (refs.length === 0) return res.json({ ok: true, count: 0, map: {} });
+
+    const p = await getPool();
+    const request = p.request();
+    const placeholders = refs.map((ref, i) => {
+      const key = `r${i}`;
+      request.input(key, sql.NVarChar(64), ref);
+      return `@${key}`;
+    });
+
+    const q = `
+      SELECT UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) AS Ref,
+             SUM(CASE WHEN TRY_CONVERT(float, DL_Qte) IS NULL THEN 0 ELSE TRY_CONVERT(float, DL_Qte) END) AS Qty
+      FROM ${TABLE_SALES_LINES}
+      WHERE UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) IN (${placeholders.join(',')})
+        AND ${SAGE_SALES_FILTER}
+      GROUP BY UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64)))))
+    `;
+    const result = await request.query(q);
+    const map = {};
+    (result.recordset || []).forEach(r => {
+      map[String(r.Ref || '').toUpperCase()] = Number(r.Qty || 0);
+    });
+    res.json({ ok: true, count: Object.keys(map).length, map });
   } catch (error) {
     res.status(500).json({ ok: false, source: 'sage', message: error.message });
   }
@@ -352,7 +392,7 @@ app.get('/api/prestashop/image/:productId/:imageId', async (req, res) => {
 
 app.get('/api/prestashop/orders', async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 300), 3000);
+    const limit = Math.min(Number(req.query.limit || 5000), 50000);
     const data = await psGet('orders', {
       output_format: 'JSON',
       display: 'full',
@@ -362,6 +402,34 @@ app.get('/api/prestashop/orders', async (req, res) => {
 
     const orders = toArray(data?.prestashop?.orders?.order || data?.orders || []);
     res.json({ ok: true, count: orders.length, rows: orders });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
+  }
+});
+
+app.post('/api/prestashop/sales-by-refs', async (req, res) => {
+  try {
+    const refsRaw = Array.isArray(req.body?.refs) ? req.body.refs : [];
+    const refs = [...new Set(refsRaw.map(r => String(r || '').trim().toUpperCase()).filter(Boolean))].slice(0, 2000);
+    if (refs.length === 0) return res.json({ ok: true, count: 0, map: {} });
+
+    const filter = `[${refs.join('|')}]`;
+    const data = await psGet('order_details', {
+      output_format: 'JSON',
+      display: 'full',
+      'filter[product_reference]': filter,
+      limit: '0,50000',
+    });
+    const rows = toArray(data?.prestashop?.order_details?.order_detail || data?.order_details || []);
+    const map = {};
+    rows.forEach(r => {
+      const ref = String(r.product_reference || '').trim().toUpperCase();
+      if (!ref) return;
+      const qty = Number(r.product_quantity || r.quantity || 0) || 0;
+      map[ref] = (map[ref] || 0) + Math.max(0, qty);
+    });
+
+    res.json({ ok: true, count: Object.keys(map).length, map });
   } catch (error) {
     res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
   }

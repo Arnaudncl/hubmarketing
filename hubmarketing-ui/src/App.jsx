@@ -132,6 +132,8 @@ function mapPrestaProducts(
   sageStock = [],
   sageSales = [],
   psOrders = [],
+  sageSalesMap = {},
+  prestaSalesMap = {},
   taxRateMap = {},
   categoryMap = {},
   supplierMap = {},
@@ -177,16 +179,25 @@ function mapPrestaProducts(
     const ref = String(r.AR_Ref || r.Reference || r.reference || "").trim().toUpperCase();
     if (ref) stockByRef.set(ref, r);
   });
-  const salesByRef = new Map();
-  const addSale = (ref, qty) => {
+  const sageSalesByRef = new Map();
+  const prestaSalesByRef = new Map();
+  Object.entries(sageSalesMap || {}).forEach(([k, v]) => {
+    const key = String(k || '').trim().toUpperCase();
+    if (key) sageSalesByRef.set(key, Math.max(0, toNum(v)));
+  });
+  Object.entries(prestaSalesMap || {}).forEach(([k, v]) => {
+    const key = String(k || '').trim().toUpperCase();
+    if (key) prestaSalesByRef.set(key, Math.max(0, toNum(v)));
+  });
+  const addSale = (targetMap, ref, qty) => {
     const key = String(ref || "").trim().toUpperCase();
     if (!key) return;
-    salesByRef.set(key, (salesByRef.get(key) || 0) + Math.max(0, toNum(qty)));
+    targetMap.set(key, (targetMap.get(key) || 0) + Math.max(0, toNum(qty)));
   };
   sageSales.forEach(r => {
     const ref = r.AR_Ref || r.Reference || r.reference || r.DL_Ref || r.DO_Ref || "";
     const qty = pickFirstNum(r, ["DL_Qte", "DO_Qte", "Quantite", "Qte", "quantity", "QTY", "QteLivree"]);
-    addSale(ref, qty || 0);
+    if (!sageSalesByRef.has(String(ref || '').trim().toUpperCase())) addSale(sageSalesByRef, ref, qty || 0);
   });
   psOrders.forEach(o => {
     const rows = o?.associations?.order_rows?.order_row;
@@ -195,8 +206,9 @@ function mapPrestaProducts(
       const attrId = String(r.product_attribute_id || r.id_product_attribute || "").trim();
       const comboRef = attrId ? String(comboById.get(attrId)?.reference || "").trim() : "";
       const ref = comboRef || r.product_reference || r.reference || "";
+      const key = String(ref || "").trim().toUpperCase();
       const qty = toNum(r.product_quantity || r.quantity || 0);
-      addSale(ref, qty);
+      if (!prestaSalesByRef.has(key)) addSale(prestaSalesByRef, ref, qty);
     });
   });
   const stockQtyFromRow = row => pickFirstNum(row, ["AS_QteSto", "QteStock", "STK_Real", "STK_Reel", "Quantity", "quantity", "Qte", "Stock"]);
@@ -251,7 +263,9 @@ function mapPrestaProducts(
       const stockComboPresta = Math.max(0, Math.max(toNum(c.quantity || 0), stockAvailByCombo.get(toNum(c.id)) || 0));
       const stockComboSage = stockQtyFromRow(stockByRef.get(crefU));
       const stockCombo = Math.max(stockComboPresta, stockComboSage);
-      const salesCombo = salesByRef.get(crefU) || 0;
+      const salesComboSage = sageSalesByRef.get(crefU) || 0;
+      const salesComboPresta = prestaSalesByRef.get(crefU) || 0;
+      const salesCombo = salesComboSage + salesComboPresta;
       return {
         id: toNum(c.id),
         ref: cref,
@@ -260,6 +274,8 @@ function mapPrestaProducts(
         priceHt: comboHt,
         stock: stockCombo,
         sales: Math.round(salesCombo),
+        salesSage: Math.round(salesComboSage),
+        salesPresta: Math.round(salesComboPresta),
         sageTtc: sageComboTtc || null,
         ttcMatch: sageComboTtc > 0 ? Math.abs(sageComboTtc - comboTtc) <= 1 : null,
       };
@@ -278,8 +294,12 @@ function mapPrestaProducts(
         )
       )
     );
-    const refsForSales = [...new Set(refs)];
-    const sales = Math.round(refsForSales.reduce((sum, r) => sum + (salesByRef.get(r) || 0), 0));
+    const refsForSales = variations.length > 0
+      ? [...new Set(variations.map(v => String(v.ref || "").trim().toUpperCase()).filter(Boolean))]
+      : [...new Set([String(p.reference || "").trim().toUpperCase()].filter(Boolean))];
+    const salesSage = Math.round(refsForSales.reduce((sum, r) => sum + (sageSalesByRef.get(r) || 0), 0));
+    const salesPresta = Math.round(refsForSales.reduce((sum, r) => sum + (prestaSalesByRef.get(r) || 0), 0));
+    const sales = salesSage + salesPresta;
 
     const refParent = String(p.reference || "").trim() || `REF-${id}`;
     const priceSageTtc = pickSageTTC(sageRow) || null;
@@ -306,6 +326,8 @@ function mapPrestaProducts(
       sage: true,
       presta: true,
       sales,
+      salesSage,
+      salesPresta,
       daysInStock: daysSince(createdAt),
       isNew: daysSince(createdAt) <= 45,
       weight: `${toNum(p.weight || 0)}kg`,
@@ -438,15 +460,16 @@ function ProductModal({product, onClose}) {
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             {/* KPIs */}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              {[
-                {l:"Prix Sage",       v:money(product.priceSageTtc || product.price), c:T.ink},
-                {l:"Prix Boutique",   v:money(product.priceShop), c:T.bronze},
-                {l:"Marge brute",     v:"+"+margin+"%",    c:T.green},
-                {l:"Ventes totales",  v:product.sales+" u.", c:T.gold},
-              ].map(k=>(
+                {[
+                  {l:"Prix Sage",       v:money(product.priceSageTtc || product.price), c:T.ink},
+                  {l:"Prix Boutique",   v:money(product.priceShop), c:T.bronze},
+                  {l:"Marge brute",     v:"+"+margin+"%",    c:T.green},
+                  {l:"Ventes totales",  v:product.sales+" u.", c:T.gold, sub:`Sage ${product.salesSage || 0} · Presta ${product.salesPresta || 0}`},
+                ].map(k=>(
                 <div key={k.l} style={{background:T.panel,borderRadius:12,padding:"14px 16px",border:`1px solid ${T.border}`}}>
                   <div style={{fontSize:9,color:T.ivoryMuted,marginBottom:6,textTransform:"uppercase",letterSpacing:1}}>{k.l}</div>
                   <div style={{fontFamily:"'DM Mono',monospace",fontSize:20,fontWeight:500,color:k.c,letterSpacing:-0.5}}>{k.v}</div>
+                  {k.sub && <div style={{fontSize:10,color:T.ivoryMuted,marginTop:4}}>{k.sub}</div>}
                 </div>
               ))}
             </div>
@@ -560,7 +583,7 @@ function ProductModal({product, onClose}) {
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                     <thead>
                       <tr style={{background:T.panelRaised}}>
-                        {["Déclinaison","Réf.","Stock","TTC Presta","TTC Sage","OK"].map(h=>(
+                        {["Déclinaison","Réf.","Stock","TTC Presta","TTC Sage","Ventes/réf","OK"].map(h=>(
                           <th key={h} style={{textAlign:"left",padding:"7px 8px",color:T.ivoryMuted,fontSize:9,textTransform:"uppercase",letterSpacing:1}}>{h}</th>
                         ))}
                       </tr>
@@ -573,6 +596,10 @@ function ProductModal({product, onClose}) {
                           <td style={{padding:"7px 8px"}}>{v.stock}</td>
                           <td style={{padding:"7px 8px"}}>{money(v.priceTtc)}</td>
                           <td style={{padding:"7px 8px"}}>{v.sageTtc ? money(v.sageTtc) : "N/A"}</td>
+                          <td style={{padding:"7px 8px",fontFamily:"'DM Mono',monospace"}}>
+                            {v.sales || 0}
+                            <span style={{fontSize:9,color:T.ivoryMuted}}> (S:{v.salesSage || 0} P:{v.salesPresta || 0})</span>
+                          </td>
                           <td style={{padding:"7px 8px"}}>{v.ttcMatch === null ? "—" : (v.ttcMatch ? "✅" : "⚠")}</td>
                         </tr>
                       ))}
@@ -694,7 +721,10 @@ function ProductsModule() {
                     <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:11,color:T.inkDim,whiteSpace:"nowrap"}}>{money(p.price)}</td>
                     <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:11,color:T.bronze,fontWeight:500,whiteSpace:"nowrap"}}>{money(p.priceShop)}</td>
                     <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:11,color:T.green}}>+{m}%</td>
-                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:13,color:T.gold,fontWeight:500}}>{p.sales}</td>
+                    <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:13,color:T.gold,fontWeight:500}}>
+                      {p.sales}
+                      <div style={{fontSize:9,marginTop:3,color:T.ivoryMuted}}>S:{p.salesSage || 0} P:{p.salesPresta || 0}</div>
+                    </td>
                     <td style={{padding:"13px 14px"}}>
                       <div style={{display:"flex",alignItems:"center",gap:5}}>
                         <div style={{width:38,height:3,background:T.panelRaised,borderRadius:2,overflow:"hidden"}}>
@@ -1307,6 +1337,7 @@ const MODULES = [
 export default function App() {
   const [active,setActive] = useState("products");
   const [, setVersion] = useState(0);
+  const syncInFlightRef = useRef(false);
   const [hasLiveData, setHasLiveData] = useState(false);
   const [syncState, setSyncState] = useState({
     loading: false,
@@ -1316,6 +1347,7 @@ export default function App() {
   });
   const [backendCtl, setBackendCtl] = useState({
     online: true,
+    managed: true,
     uptimeSec: 0,
     busy: false,
     msg: "",
@@ -1326,18 +1358,28 @@ export default function App() {
 
   const refreshBackendStatus = useCallback(async () => {
     try {
-      const r = await fetch(`${SUPERVISOR_BASE}/status`);
-      const j = await r.json();
-      setBackendCtl(prev => ({ ...prev, online: !!j.backend?.running, uptimeSec: Number(j.backend?.uptimeSec || 0) }));
+      const [sup, api] = await Promise.all([
+        fetch(`${SUPERVISOR_BASE}/status`).then(r => r.json()).catch(() => ({})),
+        fetch(`${API_BASE}/system/backend/status`).then(r => r.json()).catch(() => ({})),
+      ]);
+      const supRunning = !!sup?.backend?.running;
+      const apiRunning = !!api?.ok;
+      const online = supRunning || apiRunning;
+      const uptimeSec = Number((apiRunning ? api?.uptimeSec : sup?.backend?.uptimeSec) || 0);
+      setBackendCtl(prev => ({ ...prev, online, managed: supRunning, uptimeSec }));
     } catch {
-      setBackendCtl(prev => ({ ...prev, online: false, uptimeSec: 0 }));
+      setBackendCtl(prev => ({ ...prev, online: false, managed: false, uptimeSec: 0 }));
     }
   }, []);
 
   const controlBackend = useCallback(async action => {
     setBackendCtl(prev => ({ ...prev, busy: true, msg: "" }));
     try {
-      const r = await fetch(`${SUPERVISOR_BASE}/${action}`, { method: "POST" });
+      let targetUrl = `${SUPERVISOR_BASE}/${action}`;
+      if (!backendCtl.managed && (action === "stop" || action === "restart")) {
+        targetUrl = `${API_BASE}/system/backend/${action}`;
+      }
+      const r = await fetch(targetUrl, { method: "POST" });
       const j = await r.json().catch(() => ({}));
       setBackendCtl(prev => ({ ...prev, busy: false, msg: j.message || `Action ${action} envoyée.` }));
       setTimeout(() => refreshBackendStatus(), 800);
@@ -1349,25 +1391,64 @@ export default function App() {
         setBackendCtl(prev => ({ ...prev, busy: false, msg: `Superviseur non lancé. Lance: ${START_BACKEND_CMD}` }));
       }
     }
-  }, [START_BACKEND_CMD, refreshBackendStatus]);
+  }, [START_BACKEND_CMD, refreshBackendStatus, backendCtl.managed]);
 
   const syncLiveData = useCallback(async () => {
+    if (syncInFlightRef.current) return;
+    syncInFlightRef.current = true;
     setSyncState(prev => ({ ...prev, loading: true, error: "" }));
+    const fetchJsonWithTimeout = async (url, fallback, init = {}, timeoutMs = 30000) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const r = await fetch(url, { ...init, signal: controller.signal });
+        if (!r.ok) return fallback;
+        return await r.json();
+      } catch {
+        return fallback;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
     try {
       const [sageHealth, psHealth, psProductsRes, psCombRes, psStockAvailRes, sageProductsRes, sageStockRes, sageSalesRes, psOrdersRes, taxRatesRes, categoriesRes, suppliersRes, povRes] = await Promise.all([
-        fetch(`${API_BASE}/sage/health`).then(r => r.json()).catch(() => ({ ok: false })),
-        fetch(`${API_BASE}/prestashop/health`).then(r => r.json()).catch(() => ({ ok: false })),
-        fetch(`${API_BASE}/prestashop/products?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
-        fetch(`${API_BASE}/prestashop/combinations?limit=6000`).then(r => r.json()).catch(() => ({ rows: [] })),
-        fetch(`${API_BASE}/prestashop/stock-availables?limit=20000`).then(r => r.json()).catch(() => ({ rows: [] })),
-        fetch(`${API_BASE}/sage/products?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
-        fetch(`${API_BASE}/sage/stock?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
-        fetch(`${API_BASE}/sage/sales?limit=10000`).then(r => r.json()).catch(() => ({ rows: [] })),
-        fetch(`${API_BASE}/prestashop/orders?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
-        fetch(`${API_BASE}/prestashop/tax-rates?limit=5000`).then(r => r.json()).catch(() => ({ map: {} })),
-        fetch(`${API_BASE}/prestashop/categories?limit=3000`).then(r => r.json()).catch(() => ({ rows: [] })),
-        fetch(`${API_BASE}/prestashop/suppliers?limit=2000`).then(r => r.json()).catch(() => ({ rows: [] })),
-        fetch(`${API_BASE}/prestashop/product-option-values?limit=10000`).then(r => r.json()).catch(() => ({ rows: [] })),
+        fetchJsonWithTimeout(`${API_BASE}/sage/health`, { ok: false }, {}, 10000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/health`, { ok: false }, {}, 10000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/products?limit=2000`, { rows: [] }, {}, 35000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/combinations?limit=6000`, { rows: [] }, {}, 35000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/stock-availables?limit=20000`, { rows: [] }, {}, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/sage/products?limit=2000`, { rows: [] }, {}, 20000),
+        fetchJsonWithTimeout(`${API_BASE}/sage/stock?limit=3000`, { rows: [] }, {}, 20000),
+        fetchJsonWithTimeout(`${API_BASE}/sage/sales?limit=50000`, { rows: [] }, {}, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/orders?limit=20000`, { rows: [] }, {}, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/tax-rates?limit=5000`, { map: {} }, {}, 30000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/categories?limit=3000`, { rows: [] }, {}, 30000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/suppliers?limit=2000`, { rows: [] }, {}, 30000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/product-option-values?limit=10000`, { rows: [] }, {}, 30000),
+      ]);
+
+      const refsSet = new Set();
+      (psProductsRes.rows || []).forEach(p => {
+        const r = String(p.reference || "").trim().toUpperCase();
+        if (r) refsSet.add(r);
+      });
+      (psCombRes.rows || []).forEach(c => {
+        const r = String(c.reference || "").trim().toUpperCase();
+        if (r) refsSet.add(r);
+      });
+      const refs = [...refsSet].slice(0, 5000);
+
+      const [sageByRefsRes, prestaByRefsRes] = await Promise.all([
+        fetchJsonWithTimeout(`${API_BASE}/sage/sales-by-refs`, { map: {} }, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refs }),
+        }, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/sales-by-refs`, { map: {} }, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refs }),
+        }, 45000),
       ]);
 
       const categoryMap = {};
@@ -1391,6 +1472,8 @@ export default function App() {
         sageStockRes.rows || [],
         sageSalesRes.rows || [],
         psOrdersRes.rows || [],
+        sageByRefsRes.map || {},
+        prestaByRefsRes.map || {},
         taxRatesRes.map || {},
         categoryMap,
         supplierMap,
@@ -1421,6 +1504,8 @@ export default function App() {
         loading: false,
         error: (e.message || "Erreur de synchronisation") + " (données live indisponibles)",
       }));
+    } finally {
+      syncInFlightRef.current = false;
     }
   }, []);
 
@@ -1531,7 +1616,9 @@ export default function App() {
             <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid rgba(255,255,255,0.10)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
                 <span style={{fontSize:9,color:"#98afc4",letterSpacing:.5}}>Backend</span>
-                <span style={{fontSize:9,color:backendCtl.online?"#60d394":"#f3a0a0"}}>{backendCtl.online?"En ligne":"Arrêté"}</span>
+                <span style={{fontSize:9,color:backendCtl.online?"#60d394":"#f3a0a0"}}>
+                  {backendCtl.online ? (backendCtl.managed ? "En ligne" : "En ligne*") : "Arrêté"}
+                </span>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
                 <button onClick={()=>controlBackend("start")} style={{padding:"6px 4px",borderRadius:8,border:"1px solid rgba(96,211,148,0.35)",background:"rgba(96,211,148,0.12)",color:"#8de5b3",fontSize:10,cursor:"pointer"}}>Démarrer</button>
@@ -1541,6 +1628,9 @@ export default function App() {
               <div style={{fontSize:9,color:"#98afc4",marginTop:6}}>
                 Uptime: {Math.floor((backendCtl.uptimeSec || 0) / 60)} min
               </div>
+              {backendCtl.online && !backendCtl.managed && (
+                <div style={{fontSize:9,color:"#98afc4",marginTop:3}}>* Process API détecté hors superviseur</div>
+              )}
               {backendCtl.msg && <div style={{fontSize:9,color:"#cfe2f3",marginTop:4,lineHeight:1.35}}>{backendCtl.msg}</div>}
             </div>
           </div>
