@@ -299,6 +299,19 @@ function mapPrestaProducts(
   });
   const stockQtyFromRow = row => pickFirstNum(row, ["AS_QteSto", "QteStock", "STK_Real", "STK_Reel", "Quantity", "quantity", "Qte", "Stock"]);
   const pickSageTTC = row => pickFirstNum(row, ["AR_PrixVen", "AR_PrixVente", "PV_TTC", "PrixTTC", "PriceTTC"]);
+  const pickSageDesignation = row => {
+    const txt = stripHtml(
+      row?.AR_Design ||
+      row?.Design ||
+      row?.designation ||
+      row?.DESIGN ||
+      row?.LIBELLE ||
+      row?.Libelle ||
+      row?.name ||
+      ""
+    ).trim();
+    return txt || "";
+  };
 
   const mapped = psProducts.map((p, idx) => {
     const id = toNum(p.id) || idx + 1;
@@ -355,6 +368,7 @@ function mapPrestaProducts(
       const comboHt = Math.max(0, priceHt + priceImpactHt);
       const comboTtc = Math.max(0, Math.round(comboHt * (1 + taxRate / 100)));
       const sageCombo = sageByRef.get(crefU) || null;
+      const sageComboLabel = pickSageDesignation(sageCombo);
       const sageComboTtc = pickSageTTC(sageCombo) || 0;
       const stockComboPresta = Math.max(0, Math.max(toNum(c.quantity || 0), stockAvailByCombo.get(toNum(c.id)) || 0));
       const stockComboSage = stockQtyFromRow(stockByRef.get(crefU));
@@ -365,7 +379,7 @@ function mapPrestaProducts(
       return {
         id: toNum(c.id),
         ref: cref,
-        label: optionLabel || comboDesignation || cref || `Déclinaison #${c.id}`,
+        label: optionLabel || comboDesignation || sageComboLabel || cref || `Déclinaison #${c.id}`,
         priceTtc: comboTtc,
         priceHt: comboHt,
         stock: stockCombo,
@@ -431,7 +445,7 @@ function mapPrestaProducts(
       supplier: supplierMap[String(p.id_supplier || "")] || (p.id_supplier ? `Supplier #${p.id_supplier}` : "N/A"),
       productUrl: `${STORE_BASE}/index.php?id_product=${id}&controller=product`,
       productSlug: readLocalized(p.link_rewrite),
-      description: stripHtml(p.description_short || p.description || "Fiche synchronisée depuis PrestaShop."),
+      description: stripHtml(p.description_short || p.description || "Fiche synchronisée depuis PrestaShop.").slice(0, 320),
       createdAt,
     };
   });
@@ -942,14 +956,14 @@ function ProductsModule() {
 }
 
 /* â”€â”€â”€ REPORTING MODULE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-function ReportingModule() {
+function ReportingModule({ salesData = SALES }) {
   const [promoF, setPromoF] = useState("all");
   const [sales,  setSales]  = useState(false);
   const [selectedPromoIds, setSelectedPromoIds] = useState([]);
 
-  const totalS = SALES.reduce((s,d)=>s+d.sage,0);
-  const totalP = SALES.reduce((s,d)=>s+d.presta,0);
-  const maxVal = Math.max(...SALES.flatMap(d=>[d.sage,d.presta]));
+  const totalS = salesData.reduce((s,d)=>s+d.sage,0);
+  const totalP = salesData.reduce((s,d)=>s+d.presta,0);
+  const maxVal = Math.max(1, ...salesData.flatMap(d=>[d.sage,d.presta]));
 
   const newProds    = PRODUCTS.filter(p=>p.isNew);
   const slowProds   = PRODUCTS.filter(p=>p.daysInStock>180);
@@ -1006,7 +1020,7 @@ function ReportingModule() {
         </div>
         {/* Bars */}
         <div style={{display:"flex",alignItems:"flex-end",gap:8,height:140}}>
-          {SALES.map(d=>(
+          {salesData.map(d=>(
             <div key={d.month} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
               <div style={{display:"flex",gap:3,alignItems:"flex-end",width:"100%",justifyContent:"center"}}>
                 <div style={{width:"44%",height:(d.sage/maxVal*120)+"px",minHeight:4,background:`linear-gradient(to top,${T.bronze},${T.bronze}66)`,borderRadius:"4px 4px 0 0",transition:"height .5s ease"}}/>
@@ -1165,6 +1179,38 @@ function ReportingModule() {
             })}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function SalesModule({ salesData = SALES }) {
+  const totalS = salesData.reduce((s, d) => s + toNum(d.sage), 0);
+  const totalP = salesData.reduce((s, d) => s + toNum(d.presta), 0);
+  const maxVal = Math.max(1, ...salesData.flatMap(d => [toNum(d.sage), toNum(d.presta)]));
+
+  return (
+    <div style={{ padding: "28px 32px" }}>
+      <SectionTitle sub="Période glissante sur 12 mois">Ventes</SectionTitle>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12, marginBottom: 20 }}>
+        <KpiCard icon="SAG" label="Sage (12 mois)" value={money(totalS)} color={T.bronze} sub="Quantité vendue" />
+        <KpiCard icon="WEB" label="PrestaShop (12 mois)" value={money(totalP)} color={T.blue} sub="Quantité vendue" />
+      </div>
+      <div style={{ background: T.panel, borderRadius: 16, border: `1px solid ${T.border}`, padding: 20 }}>
+        <h3 style={{ fontFamily: "'Montserrat','Open Sans',sans-serif", fontSize: 16, fontWeight: 600, color: T.ivory, margin: "0 0 14px" }}>
+          Ventes par mois
+        </h3>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 250 }}>
+          {salesData.map(d => (
+            <div key={d.month} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+              <div style={{ display: "flex", gap: 3, alignItems: "flex-end", width: "100%", justifyContent: "center" }}>
+                <div style={{ width: "44%", height: `${(toNum(d.sage) / maxVal) * 190}px`, minHeight: 4, background: `linear-gradient(to top,${T.bronze},${T.bronze}66)`, borderRadius: "4px 4px 0 0" }} />
+                <div style={{ width: "44%", height: `${(toNum(d.presta) / maxVal) * 190}px`, minHeight: 4, background: `linear-gradient(to top,${T.blue},${T.blue}66)`, borderRadius: "4px 4px 0 0" }} />
+              </div>
+              <div style={{ fontSize: 10, color: T.ivoryMuted, fontFamily: "'DM Mono',monospace" }}>{d.month}</div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1533,6 +1579,7 @@ function AssistantModule() {
 /* â”€â”€â”€ MAIN APP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const MODULES = [
   {id:"products",  icon:"CAT", label:"Catalogue",          color:T.bronze},
+  {id:"sales",     icon:"SAL", label:"Ventes",             color:T.green},
   {id:"images",    icon:"IMG", label:"Images",             color:T.blue},
   {id:"reporting", icon:"RPT", label:"Stats & Promotions", color:T.green},
   {id:"studio",    icon:"STD", label:"Studio",             color:T.gold},
@@ -1542,6 +1589,7 @@ const MODULES = [
 export default function App() {
   const [active,setActive] = useState("products");
   const [, setVersion] = useState(0);
+  const [salesMonthly, setSalesMonthly] = useState(SALES);
   const syncInFlightRef = useRef(false);
   const salesCacheRef = useRef({ at: 0, refsKey: "", sageMap: {}, prestaMap: {} });
   const [hasLiveData, setHasLiveData] = useState(false);
@@ -1559,7 +1607,14 @@ export default function App() {
     msg: "",
   });
   const am = MODULES.find(m=>m.id===active);
-  const CONTENT = {products:<ProductsModule/>,images:<ImagesModule/>,reporting:<ReportingModule/>,studio:<StudioModule/>,assistant:<AssistantModule/>};
+  const CONTENT = {
+    products:<ProductsModule/>,
+    sales:<SalesModule salesData={salesMonthly} />,
+    images:<ImagesModule/>,
+    reporting:<ReportingModule salesData={salesMonthly} />,
+    studio:<StudioModule/>,
+    assistant:<AssistantModule/>
+  };
   const START_BACKEND_CMD = "cd d:\\IT\\Ancien PC\\App\\HubMarketing\\hubmarketing-ui\\server && npm run supervisor";
 
   const refreshBackendStatus = useCallback(async () => {
@@ -1617,18 +1672,20 @@ export default function App() {
       }
     };
     try {
-      const [sageHealth, psHealth, psProductsRes, psCombRes, psStockAvailRes, sageProductsRes, sageStockRes, taxRatesRes, categoriesRes, suppliersRes, povRes] = await Promise.all([
+      const [sageHealth, psHealth, psProductsRes, psCombRes, psStockAvailRes, sageProductsRes, sageStockRes, taxRatesRes, categoriesRes, suppliersRes, povRes, sageMonthlyRes, prestaMonthlyRes] = await Promise.all([
         fetchJsonWithTimeout(`${API_BASE}/sage/health`, { ok: false }, {}, 10000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/health`, { ok: false }, {}, 10000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/products?limit=2000&batch=1000`, { rows: [] }, {}, 45000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/combinations?limit=6000&batch=1000`, { rows: [] }, {}, 45000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/stock-availables?limit=20000`, { rows: [] }, {}, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/products?lite=1&limit=5000&batch=1000`, { rows: [] }, {}, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/combinations?lite=1&limit=20000&batch=1000`, { rows: [] }, {}, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/stock-availables?lite=1&limit=50000`, { rows: [] }, {}, 45000),
         fetchJsonWithTimeout(`${API_BASE}/sage/products?limit=5000`, { rows: [] }, {}, 30000),
         fetchJsonWithTimeout(`${API_BASE}/sage/stock?limit=3000`, { rows: [] }, {}, 20000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/tax-rates?limit=5000`, { map: {} }, {}, 30000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/categories?limit=3000`, { rows: [] }, {}, 30000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/suppliers?limit=2000`, { rows: [] }, {}, 30000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/product-option-values?limit=10000`, { rows: [] }, {}, 30000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/categories?lite=1&limit=3000`, { rows: [] }, {}, 30000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/suppliers?lite=1&limit=2000`, { rows: [] }, {}, 30000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/product-option-values?lite=1&limit=10000`, { rows: [] }, {}, 30000),
+        fetchJsonWithTimeout(`${API_BASE}/sage/sales-monthly?months=12`, { rows: [] }, {}, 30000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/sales-monthly?months=12`, { rows: [] }, {}, 30000),
       ]);
 
       let psProductsRows = [...(psProductsRes.rows || [])];
@@ -1702,6 +1759,27 @@ export default function App() {
         setHasLiveData(false);
       }
 
+      const monthlyMap = new Map();
+      (sageMonthlyRes.rows || []).forEach(r => {
+        const key = String(r.yearMonth || r.ym || "");
+        if (!key) return;
+        monthlyMap.set(key, { month: String(r.monthLabel || key), sage: toNum(r.qty || 0), presta: 0 });
+      });
+      (prestaMonthlyRes.rows || []).forEach(r => {
+        const key = String(r.yearMonth || r.ym || "");
+        if (!key) return;
+        const cur = monthlyMap.get(key) || { month: String(r.monthLabel || key), sage: 0, presta: 0 };
+        cur.presta = toNum(r.qty || 0);
+        if (!cur.month) cur.month = String(r.monthLabel || key);
+        monthlyMap.set(key, cur);
+      });
+      if (monthlyMap.size > 0) {
+        const merged = [...monthlyMap.entries()]
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+          .map(([, v]) => ({ month: v.month, sage: v.sage, presta: v.presta }));
+        setSalesMonthly(merged);
+      }
+
       setVersion(v => v + 1);
       setSyncState({
         loading: false,
@@ -1713,7 +1791,7 @@ export default function App() {
       if (!canReuseSales && refs.length > 0) {
         (async () => {
           const [sageByRefsRes, prestaByRefsRes] = await Promise.all([
-            fetchJsonWithTimeout(`${API_BASE}/sage/sales-by-refs`, { map: {} }, {
+            fetchJsonWithTimeout(`${API_BASE}/sage/sales-by-refs?months=12`, { map: {} }, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ refs }),
@@ -1773,18 +1851,9 @@ export default function App() {
 
   useEffect(() => {
     let raf = 0;
-    const runFix = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => fixMojibakeTextTree(document.body));
-    };
-    runFix();
-    const observer = new MutationObserver(() => runFix());
-    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-    return () => {
-      cancelAnimationFrame(raf);
-      observer.disconnect();
-    };
-  }, []);
+    raf = requestAnimationFrame(() => fixMojibakeTextTree(document.body));
+    return () => cancelAnimationFrame(raf);
+  }, [active, syncState.lastSync]);
 
   useEffect(() => {
     refreshBackendStatus();

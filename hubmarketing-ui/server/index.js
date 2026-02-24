@@ -42,6 +42,7 @@ const TABLE_PRODUCTS = process.env.SAGE_TABLE_PRODUCTS || 'F_ARTICLE';
 const TABLE_STOCK = process.env.SAGE_TABLE_STOCK || 'F_STOCK';
 const TABLE_SALES_LINES = process.env.SAGE_TABLE_SALES_LINES || 'F_DOCLIGNE';
 const SAGE_SALES_FILTER = process.env.SAGE_SALES_FILTER || '(DO_Domaine = 0 AND DO_Type = 7)';
+const SALES_MONTHS_DEFAULT = Math.max(1, Number(process.env.SALES_MONTHS_DEFAULT || 12));
 
 const PS_BASE_URL = (process.env.PS_BASE_URL || 'https://www.house-store.com/api').replace(/\/+$/, '');
 const PS_API_KEY = process.env.PS_API_KEY || '';
@@ -172,6 +173,56 @@ async function psGet(path, query = {}) {
 function toArray(value) {
   if (!value) return [];
   return Array.isArray(value) ? value : [value];
+}
+
+function toLiteProduct(p = {}) {
+  return {
+    id: p.id,
+    id_category_default: p.id_category_default,
+    id_supplier: p.id_supplier,
+    id_default_image: p.id_default_image,
+    reference: p.reference,
+    price: p.price,
+    weight: p.weight,
+    width: p.width,
+    depth: p.depth,
+    height: p.height,
+    date_add: p.date_add,
+    name: p.name,
+    link_rewrite: p.link_rewrite,
+    associations: {
+      images: p?.associations?.images || null,
+    },
+  };
+}
+
+function toLiteCombination(c = {}) {
+  return {
+    id: c.id,
+    id_product: c.id_product,
+    reference: c.reference,
+    quantity: c.quantity,
+    price: c.price,
+    associations: {
+      product_option_values: c?.associations?.product_option_values || null,
+    },
+  };
+}
+
+function toLiteStockAvailable(s = {}) {
+  return {
+    id: s.id,
+    id_product: s.id_product,
+    id_product_attribute: s.id_product_attribute,
+    quantity: s.quantity,
+  };
+}
+
+function monthLabelFromYearMonth(ym) {
+  const s = String(ym || '');
+  const month = Number(s.split('-')[1] || 0);
+  const labels = ['Jan', 'Fev', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aou', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return labels[Math.max(0, Math.min(11, month - 1))] || s;
 }
 
 function scheduleSelfRestartWindows() {
@@ -341,6 +392,7 @@ app.get('/api/sage/stock', async (req, res) => {
 app.get('/api/sage/sales', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 20000), 200000);
+    const months = Math.max(1, Math.min(Number(req.query.months || SALES_MONTHS_DEFAULT), 60));
     const skipCache = req.query.nocache === '1';
     const cacheKey = makeCacheKey('sage/sales', req.originalUrl);
     const rows = await cachedFetch({
@@ -351,6 +403,7 @@ app.get('/api/sage/sales', async (req, res) => {
         SELECT TOP (${limit}) *
         FROM ${TABLE_SALES_LINES}
         WHERE ISNULL(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64)))), '') <> ''
+          AND TRY_CONVERT(datetime, cbModification) >= DATEADD(month, -${months}, GETDATE())
           AND ${SAGE_SALES_FILTER}
         ORDER BY cbModification DESC, DO_Date DESC, DL_No DESC
       `),
@@ -361,48 +414,111 @@ app.get('/api/sage/sales', async (req, res) => {
   }
 });
 
+app.get('/api/sage/sales-monthly', async (req, res) => {
+  try {
+    const months = Math.max(1, Math.min(Number(req.query.months || SALES_MONTHS_DEFAULT), 60));
+    const skipCache = req.query.nocache === '1';
+    const cacheKey = makeCacheKey('sage/sales-monthly', req.originalUrl);
+    const rows = await cachedFetch({
+      key: cacheKey,
+      ttlMs: CACHE_TTL_SHORT_MS,
+      skipCache,
+      fetcher: () => runQuery(`
+        SELECT
+          CONCAT(
+            DATEPART(year, TRY_CONVERT(datetime, cbModification)),
+            '-',
+            RIGHT('0' + CAST(DATEPART(month, TRY_CONVERT(datetime, cbModification)) AS VARCHAR(2)), 2)
+          ) AS yearMonth,
+          SUM(CASE WHEN TRY_CONVERT(float, DL_Qte) IS NULL THEN 0 ELSE TRY_CONVERT(float, DL_Qte) END) AS qty
+        FROM ${TABLE_SALES_LINES}
+        WHERE TRY_CONVERT(datetime, cbModification) >= DATEADD(month, -${months}, GETDATE())
+          AND TRY_CONVERT(float, DL_Qte) > 0
+          AND ${SAGE_SALES_FILTER}
+        GROUP BY
+          DATEPART(year, TRY_CONVERT(datetime, cbModification)),
+          DATEPART(month, TRY_CONVERT(datetime, cbModification))
+        ORDER BY yearMonth ASC
+      `),
+    });
+
+    const normalized = (rows || []).map(r => {
+      const yearMonth = String(r.yearMonth || '');
+      return {
+        yearMonth,
+        monthLabel: monthLabelFromYearMonth(yearMonth),
+        qty: Number(r.qty || 0),
+      };
+    });
+    res.json({ ok: true, months, count: normalized.length, rows: normalized });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'sage', message: error.message });
+  }
+});
+
 app.post('/api/sage/sales-by-refs', async (req, res) => {
   try {
     const refsRaw = Array.isArray(req.body?.refs) ? req.body.refs : [];
     const refs = [...new Set(refsRaw.map(r => String(r || '').trim().toUpperCase()).filter(Boolean))].slice(0, 20000);
+    const months = Math.max(1, Math.min(Number(req.query.months || req.body?.months || SALES_MONTHS_DEFAULT), 60));
     if (refs.length === 0) return res.json({ ok: true, count: 0, map: {} });
 
     const skipCache = req.query.nocache === '1';
     const cacheKey = makeCacheKey('sage/sales-by-refs', toStableKey(refs));
-    const map = await cachedFetch({
+    const result = await cachedFetch({
       key: cacheKey,
       ttlMs: CACHE_TTL_SHORT_MS,
       skipCache,
       fetcher: async () => {
-        const resultMap = {};
-        const chunkSize = 1000; // keep under SQL parameter limits
-        const p = await getPool();
-        for (let offset = 0; offset < refs.length; offset += chunkSize) {
-          const chunk = refs.slice(offset, offset + chunkSize);
-          const request = p.request();
-          const placeholders = chunk.map((ref, i) => {
-            const key = `r${i}`;
-            request.input(key, sql.NVarChar(64), ref);
-            return `@${key}`;
-          });
-          const q = `
-            SELECT UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) AS Ref,
-                   SUM(CASE WHEN TRY_CONVERT(float, DL_Qte) IS NULL THEN 0 ELSE TRY_CONVERT(float, DL_Qte) END) AS Qty
-            FROM ${TABLE_SALES_LINES}
-            WHERE UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) IN (${placeholders.join(',')})
-              AND ${SAGE_SALES_FILTER}
-            GROUP BY UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64)))))
-          `;
-          const result = await request.query(q);
-          (result.recordset || []).forEach(r => {
-            const key = String(r.Ref || '').toUpperCase();
-            resultMap[key] = (resultMap[key] || 0) + Number(r.Qty || 0);
-          });
+        const queryMap = async (whereFilter = '') => {
+          const resultMap = {};
+          const chunkSize = 1000; // keep under SQL parameter limits
+          const p = await getPool();
+          for (let offset = 0; offset < refs.length; offset += chunkSize) {
+            const chunk = refs.slice(offset, offset + chunkSize);
+            const request = p.request();
+            const placeholders = chunk.map((ref, i) => {
+              const key = `r${i}`;
+              request.input(key, sql.NVarChar(64), ref);
+              return `@${key}`;
+            });
+            const q = `
+              SELECT UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) AS Ref,
+                     SUM(CASE WHEN TRY_CONVERT(float, DL_Qte) IS NULL THEN 0 ELSE TRY_CONVERT(float, DL_Qte) END) AS Qty
+              FROM ${TABLE_SALES_LINES}
+              WHERE UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) IN (${placeholders.join(',')})
+                AND TRY_CONVERT(datetime, cbModification) >= DATEADD(month, -${months}, GETDATE())
+                AND TRY_CONVERT(float, DL_Qte) > 0
+                ${whereFilter ? `AND (${whereFilter})` : ''}
+              GROUP BY UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64)))))
+            `;
+            const resultRows = await request.query(q);
+            (resultRows.recordset || []).forEach(r => {
+              const key = String(r.Ref || '').toUpperCase();
+              resultMap[key] = (resultMap[key] || 0) + Number(r.Qty || 0);
+            });
+          }
+          return resultMap;
+        };
+
+        // 1) filtre Sage configuré
+        const filteredMap = await queryMap(SAGE_SALES_FILTER);
+        if (Object.keys(filteredMap).length > 0) {
+          return { map: filteredMap, mode: 'filtered' };
         }
-        return resultMap;
+
+        // 2) fallback sans filtre (certains dossiers Sage n'utilisent pas DO_Domaine/DO_Type comme attendu)
+        const fallbackMap = await queryMap('');
+        return { map: fallbackMap, mode: 'fallback_unfiltered' };
       },
     });
-    res.json({ ok: true, count: Object.keys(map).length, map });
+    res.json({
+      ok: true,
+      months,
+      mode: result?.mode || 'filtered',
+      count: Object.keys(result?.map || {}).length,
+      map: result?.map || {},
+    });
   } catch (error) {
     res.status(500).json({ ok: false, source: 'sage', message: error.message });
   }
@@ -422,6 +538,7 @@ app.get('/api/prestashop/products', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 300), 20000);
     const batchSize = Math.min(Number(req.query.batch || 1000), 1000);
+    const lite = req.query.lite === '1';
     const skipCache = req.query.nocache === '1';
     const cacheKey = makeCacheKey('ps/products', req.originalUrl);
     const products = await cachedFetch({
@@ -435,13 +552,15 @@ app.get('/api/prestashop/products', async (req, res) => {
           const take = Math.min(batchSize, limit - list.length);
           const data = await psGet('products', {
             output_format: 'JSON',
-            display: 'full',
+            display: lite
+              ? '[id,id_category_default,id_supplier,id_default_image,reference,price,weight,width,depth,height,date_add,name,link_rewrite,associations]'
+              : 'full',
             limit: `${offset},${take}`,
             sort: '[id_DESC]',
           });
           const rows = toArray(data?.prestashop?.products?.product || data?.products || []);
           if (!rows.length) break;
-          list.push(...rows);
+          list.push(...(lite ? rows.map(toLiteProduct) : rows));
           if (rows.length < take) break;
           offset += take;
         }
@@ -486,6 +605,7 @@ app.get('/api/prestashop/combinations', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 1000), 50000);
     const batchSize = Math.min(Number(req.query.batch || 1000), 1000);
+    const lite = req.query.lite === '1';
     const skipCache = req.query.nocache === '1';
     const cacheKey = makeCacheKey('ps/combinations', req.originalUrl);
     const combinations = await cachedFetch({
@@ -499,13 +619,13 @@ app.get('/api/prestashop/combinations', async (req, res) => {
           const take = Math.min(batchSize, limit - list.length);
           const data = await psGet('combinations', {
             output_format: 'JSON',
-            display: 'full',
+            display: lite ? '[id,id_product,reference,quantity,price,associations]' : 'full',
             limit: `${offset},${take}`,
             sort: '[id_DESC]',
           });
           const rows = toArray(data?.prestashop?.combinations?.combination || data?.combinations || []);
           if (!rows.length) break;
-          list.push(...rows);
+          list.push(...(lite ? rows.map(toLiteCombination) : rows));
           if (rows.length < take) break;
           offset += take;
         }
@@ -538,6 +658,7 @@ app.get('/api/prestashop/currencies', async (req, res) => {
 app.get('/api/prestashop/categories', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 2000), 10000);
+    const lite = req.query.lite === '1';
     const skipCache = req.query.nocache === '1';
     const cacheKey = makeCacheKey('ps/categories', req.originalUrl);
     const rows = await cachedFetch({
@@ -547,7 +668,7 @@ app.get('/api/prestashop/categories', async (req, res) => {
       fetcher: async () => {
         const data = await psGet('categories', {
           output_format: 'JSON',
-          display: 'full',
+          display: lite ? '[id,name]' : 'full',
           limit: `0,${limit}`,
           sort: '[id_ASC]',
         });
@@ -563,6 +684,7 @@ app.get('/api/prestashop/categories', async (req, res) => {
 app.get('/api/prestashop/suppliers', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 1000), 5000);
+    const lite = req.query.lite === '1';
     const skipCache = req.query.nocache === '1';
     const cacheKey = makeCacheKey('ps/suppliers', req.originalUrl);
     const rows = await cachedFetch({
@@ -572,7 +694,7 @@ app.get('/api/prestashop/suppliers', async (req, res) => {
       fetcher: async () => {
         const data = await psGet('suppliers', {
           output_format: 'JSON',
-          display: 'full',
+          display: lite ? '[id,name]' : 'full',
           limit: `0,${limit}`,
           sort: '[id_ASC]',
         });
@@ -588,6 +710,7 @@ app.get('/api/prestashop/suppliers', async (req, res) => {
 app.get('/api/prestashop/product-option-values', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 5000), 20000);
+    const lite = req.query.lite === '1';
     const skipCache = req.query.nocache === '1';
     const cacheKey = makeCacheKey('ps/product-option-values', req.originalUrl);
     const rows = await cachedFetch({
@@ -597,7 +720,7 @@ app.get('/api/prestashop/product-option-values', async (req, res) => {
       fetcher: async () => {
         const data = await psGet('product_option_values', {
           output_format: 'JSON',
-          display: 'full',
+          display: lite ? '[id,name]' : 'full',
           limit: `0,${limit}`,
           sort: '[id_ASC]',
         });
@@ -613,6 +736,7 @@ app.get('/api/prestashop/product-option-values', async (req, res) => {
 app.get('/api/prestashop/stock-availables', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit || 10000), 50000);
+    const lite = req.query.lite === '1';
     const skipCache = req.query.nocache === '1';
     const cacheKey = makeCacheKey('ps/stock-availables', req.originalUrl);
     const rows = await cachedFetch({
@@ -622,11 +746,12 @@ app.get('/api/prestashop/stock-availables', async (req, res) => {
       fetcher: async () => {
         const data = await psGet('stock_availables', {
           output_format: 'JSON',
-          display: 'full',
+          display: lite ? '[id,id_product,id_product_attribute,quantity]' : 'full',
           limit: `0,${limit}`,
           sort: '[id_ASC]',
         });
-        return toArray(data?.prestashop?.stock_availables?.stock_available || data?.stock_availables || []);
+        const raw = toArray(data?.prestashop?.stock_availables?.stock_available || data?.stock_availables || []);
+        return lite ? raw.map(toLiteStockAvailable) : raw;
       },
     });
     res.json({ ok: true, count: rows.length, rows });
@@ -681,6 +806,50 @@ app.get('/api/prestashop/orders', async (req, res) => {
       },
     });
     res.json({ ok: true, count: orders.length, rows: orders });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
+  }
+});
+
+app.get('/api/prestashop/sales-monthly', async (req, res) => {
+  try {
+    const months = Math.max(1, Math.min(Number(req.query.months || SALES_MONTHS_DEFAULT), 60));
+    const limit = Math.min(Number(req.query.limit || 50000), 100000);
+    const skipCache = req.query.nocache === '1';
+    const cacheKey = makeCacheKey('ps/sales-monthly', `${req.originalUrl}|limit=${limit}`);
+    const rows = await cachedFetch({
+      key: cacheKey,
+      ttlMs: CACHE_TTL_SHORT_MS,
+      skipCache,
+      fetcher: async () => {
+        const data = await psGet('orders', {
+          output_format: 'JSON',
+          display: 'full',
+          limit: `0,${limit}`,
+          sort: '[id_DESC]',
+        });
+        const orders = toArray(data?.prestashop?.orders?.order || data?.orders || []);
+        const now = new Date();
+        const minDate = new Date(now.getFullYear(), now.getMonth() - (months - 1), 1);
+        const map = new Map();
+
+        orders.forEach(o => {
+          const d = new Date(o?.date_add || o?.date_upd || '');
+          if (Number.isNaN(d.getTime()) || d < minDate) return;
+          const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          map.set(ym, (map.get(ym) || 0) + 1);
+        });
+
+        return [...map.entries()]
+          .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+          .map(([yearMonth, qty]) => ({
+            yearMonth,
+            monthLabel: monthLabelFromYearMonth(yearMonth),
+            qty: Number(qty || 0),
+          }));
+      },
+    });
+    res.json({ ok: true, months, count: rows.length, rows });
   } catch (error) {
     res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
   }
