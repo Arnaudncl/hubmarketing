@@ -1017,7 +1017,7 @@ function ReportingModule() {
           {[...PRODUCTS].sort((a,b)=>b.sales-a.sales).slice(0,5).map((p,i)=>(
             <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
               <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:[T.gold,T.ivoryMuted,T.bronze,T.ivoryDeep,T.ivoryDeep][i],width:18,flexShrink:0,textAlign:"center",fontWeight:500}}>
-                {["â‘ ","â‘¡","â‘¢","â‘£","â‘¤"][i]}
+                {["1","2","3","4","5"][i]}
               </div>
               <span style={{fontSize:18}}>{p.image}</span>
               <div style={{flex:1}}>
@@ -1030,7 +1030,7 @@ function ReportingModule() {
             </div>
           ))}
         </div>
-        {/* CA catÃ©gories */}
+        {/* CA catégories */}
         <div style={{background:T.panel,borderRadius:18,padding:22,border:`1px solid ${T.border}`}}>
           <h3 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:16,fontWeight:600,color:T.ivory,margin:"0 0 18px"}}>CA par catégorie</h3>
           {CATS.map(cat=>{
@@ -1053,15 +1053,15 @@ function ReportingModule() {
         </div>
       </div>
 
-      {/* â”€â”€ PROMO SECTION â”€â”€ */}
+      {/* PROMO SECTION */}
       <div style={{background:T.panel,borderRadius:18,padding:28,border:`1px solid ${T.border}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
           <div>
-            <h3 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:20,fontWeight:600,color:T.ivory,margin:"0 0 4px"}}>OpÃ©rations Promotionnelles</h3>
-            <p style={{margin:0,fontSize:11,color:T.ivoryMuted}}>Recommandations intelligentes basÃ©es sur votre catalogue</p>
+            <h3 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:20,fontWeight:600,color:T.ivory,margin:"0 0 4px"}}>Opérations Promotionnelles</h3>
+            <p style={{margin:0,fontSize:11,color:T.ivoryMuted}}>Recommandations intelligentes basées sur votre catalogue</p>
           </div>
           <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
-            <span style={{fontSize:11,color:sales?"#c060a0":T.ivoryMuted,fontWeight:600,letterSpacing:.3}}>ðŸ· PÃ©riode de soldes</span>
+            <span style={{fontSize:11,color:sales?"#c060a0":T.ivoryMuted,fontWeight:600,letterSpacing:.3}}>Mode soldes</span>
             <div onClick={()=>setSales(!sales)} style={{width:42,height:22,borderRadius:11,background:sales?"#c060a0":T.border,position:"relative",cursor:"pointer",transition:"background .2s",flexShrink:0}}>
               <div style={{position:"absolute",top:3,left:sales?23:3,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,.3)"}}/>
             </div>
@@ -1116,11 +1116,11 @@ function ReportingModule() {
                   <h4 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:16,fontWeight:600,color:group.color,margin:0}}>{group.label}</h4>
                   <span style={{background:group.color+"22",color:group.color,fontSize:8,fontWeight:700,padding:"2px 9px",borderRadius:20,letterSpacing:.8,border:`1px solid ${group.color}33`}}>{group.urgency}</span>
                 </div>
-                <p style={{margin:"0 0 4px",fontSize:12,color:T.inkDim}}>â†’ {group.action}</p>
-                <p style={{margin:0,fontSize:11,color:group.color+"aa",fontStyle:"italic"}}>ðŸ’¡ {group.tip}</p>
+                <p style={{margin:"0 0 4px",fontSize:12,color:T.inkDim}}>{group.action}</p>
+                <p style={{margin:0,fontSize:11,color:group.color+"aa",fontStyle:"italic"}}>{group.tip}</p>
               </div>
               <div style={{display:"flex",gap:8,flexShrink:0}}>
-                <button style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",background:group.color,color:"#fff",fontSize:11,fontWeight:700,fontFamily:"inherit"}}>CrÃ©er campagne</button>
+                <button style={{padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",background:group.color,color:"#fff",fontSize:11,fontWeight:700,fontFamily:"inherit"}}>Créer campagne</button>
                 <button style={{padding:"8px 12px",borderRadius:8,border:`1px solid ${group.color}44`,cursor:"pointer",background:"transparent",color:group.color,fontSize:11,fontFamily:"inherit"}}>Export</button>
               </div>
             </div>
@@ -1141,7 +1141,7 @@ function ReportingModule() {
                   <div style={{width:36,height:36,borderRadius:9,background:T.panelRaised,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{p.image}</div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:T.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
-                    <div style={{fontSize:10,color:T.ivoryMuted,marginTop:2,fontFamily:"'DM Mono',monospace"}}>{p.ref} Â· {p.daysInStock}j stock Â· {p.stock}u Â· {p.sales} ventes</div>
+                    <div style={{fontSize:10,color:T.ivoryMuted,marginTop:2,fontFamily:"'DM Mono',monospace"}}>{p.ref} · {p.daysInStock}j stock · {p.stock}u · {p.sales} ventes</div>
                   </div>
                   <div style={{textAlign:"right",flexShrink:0}}>
                     <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:dp?T.inkMuted:T.ink,fontWeight:dp?"400":"500",textDecoration:dp?"line-through":"none"}}>{money(p.priceShop)}</div>
@@ -1149,7 +1149,7 @@ function ReportingModule() {
                   </div>
                   <div style={{display:"flex",gap:6,flexShrink:0}}>
                     <button style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",background:group.color+"22",color:group.color,fontSize:11,fontWeight:700,fontFamily:"inherit"}}>Appliquer</button>
-                    <button style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:"transparent",color:T.ivoryMuted,fontSize:11,fontFamily:"inherit"}}>ðŸŽ¨</button>
+                    <button style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${T.border}`,cursor:"pointer",background:"transparent",color:T.ivoryMuted,fontSize:11,fontFamily:"inherit"}}>Studio</button>
                   </div>
                 </div>
               );
