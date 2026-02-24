@@ -82,16 +82,91 @@ const toNum = v => {
   return Number.isFinite(n) ? n : 0;
 };
 const mojibakeFix = val => {
-  const s = String(val ?? "");
-  if (!/[ÃÂâð]/.test(s)) return s;
-  try {
-    return decodeURIComponent(escape(s));
-  } catch {
-    return s;
+  let s = String(val ?? "");
+  const bad = /(?:Ã.|Â.|â.|ð.|ï.|�)/;
+  if (!bad.test(s)) return s;
+
+  const directMap = [
+    ["â‚¬", "€"],
+    ["Â·", "·"],
+    ["â€“", "–"],
+    ["â€”", "—"],
+    ["â€™", "'"],
+    ["â€œ", "\""],
+    ["â€", "\""],
+    ["â€¦", "…"],
+    ["Â ", " "],
+    ["Ã©", "é"],
+    ["Ã¨", "è"],
+    ["Ãª", "ê"],
+    ["Ã«", "ë"],
+    ["Ã ", "à"],
+    ["Ã¢", "â"],
+    ["Ã®", "î"],
+    ["Ã¯", "ï"],
+    ["Ã´", "ô"],
+    ["Ã¶", "ö"],
+    ["Ã¹", "ù"],
+    ["Ã»", "û"],
+    ["Ã¼", "ü"],
+    ["Ã§", "ç"],
+    ["Ã‰", "É"],
+    ["Ãˆ", "È"],
+    ["ÃŠ", "Ê"],
+    ["Ã‹", "Ë"],
+    ["Ã€", "À"],
+    ["Ã‚", "Â"],
+    ["ÃŽ", "Î"],
+    ["Ã", "à"],
+    ["Ã”", "Ô"],
+    ["Ã–", "Ö"],
+    ["Ã™", "Ù"],
+    ["Ã›", "Û"],
+    ["Ãœ", "Ü"],
+    ["Ã‡", "Ç"],
+    ["Ã—", "×"],
+    ["Ã˜", "Ø"],
+    ["Â³", "³"],
+    ["Â°", "°"],
+    ["Â»", "»"],
+    ["Â«", "«"],
+    ["Â", ""],
+  ];
+  for (const [from, to] of directMap) s = s.split(from).join(to);
+
+  const decodeAsLatin1Utf8 = input => {
+    const bytes = Uint8Array.from(Array.from(input).map(ch => ch.charCodeAt(0) & 0xff));
+    return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  };
+  const badCount = input => (input.match(bad) || []).length;
+
+  for (let i = 0; i < 2; i += 1) {
+    let candidate = s;
+    try {
+      candidate = decodeURIComponent(escape(s));
+    } catch {}
+    try {
+      const utf8 = decodeAsLatin1Utf8(s);
+      if (badCount(utf8) <= badCount(candidate)) candidate = utf8;
+    } catch {}
+    if (badCount(candidate) < badCount(s)) s = candidate;
   }
+
+  return s;
 };
 const fixMojibakeTextTree = root => {
   if (!root) return;
+  const attrsToFix = ["title", "placeholder", "aria-label", "alt"];
+  if (root.querySelectorAll) {
+    root.querySelectorAll("*").forEach(el => {
+      attrsToFix.forEach(attr => {
+        const v = el.getAttribute?.(attr);
+        if (!v) return;
+        const fixed = mojibakeFix(v);
+        if (fixed !== v) el.setAttribute(attr, fixed);
+      });
+    });
+  }
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode();
   while (node) {
@@ -874,13 +949,13 @@ function ReportingModule() {
   const saleProds   = PRODUCTS.filter(p=>p.daysInStock>60&&p.stock>0&&!p.isNew);
 
   const GROUPS = [
-    {id:"new",  icon:"ðŸ†•", label:"NouveautÃ©s Ã  promouvoir",  color:T.blue,   data:newProds,  action:"Homepage + RÃ©seaux + Email",       discount:null, urgency:"PRIORITÃ‰ HAUTE", tip:"Les nouveautÃ©s gÃ©nÃ¨rent 3Ã— plus d'engagement les 30 premiers jours."},
-    {id:"slow", icon:"ðŸ¢", label:"Rotation lente (>180j)",   color:T.orange, data:slowProds, action:"Remise âˆ’20 Ã  âˆ’30 % recommandÃ©e",    discount:25,   urgency:"ACTION REQUISE",  tip:"Ces articles immobilisent du capital. Une remise amÃ©liore la trÃ©sorerie."},
-    {id:"med",  icon:"âš¡", label:"Ã€ dynamiser (90â€“180j)",    color:T.gold,   data:medProds,  action:"Newsletter + Offre groupÃ©e",        discount:10,   urgency:"Ã€ SURVEILLER",    tip:"Proposer en lot avec des best-sellers pour relancer les ventes."},
-    {id:"rupt", icon:"ðŸš¨", label:"Ruptures de stock",         color:T.red,    data:ruptProds, action:"Relance fournisseur urgente",       discount:null, urgency:"URGENT",           tip:"Chaque jour de rupture = ventes manquÃ©es. Activer la liste d'attente."},
-    ...(sales?[{id:"sale",icon:"ðŸ·ï¸",label:"Candidats soldes",color:"#c060a0",data:saleProds,action:"Solde âˆ’30 Ã  âˆ’50 %",discount:40,urgency:"MODE SOLDES",tip:"SÃ©lection intelligente basÃ©e sur rotation et stock disponible."}]:[]),
+    {id:"new",  icon:"NEW",  label:"Nouveautés à promouvoir", color:T.blue,   data:newProds,  action:"Homepage + Réseaux + Email",      discount:null, urgency:"PRIORITÉ HAUTE", tip:"Les nouveautés génèrent plus d'engagement les 30 premiers jours."},
+    {id:"slow", icon:"SLOW", label:"Rotation lente (>180j)",  color:T.orange, data:slowProds, action:"Remise -20 à -30 % recommandée",   discount:25,   urgency:"ACTION REQUISE", tip:"Ces articles immobilisent du capital. Une remise améliore la trésorerie."},
+    {id:"med",  icon:"MED",  label:"À dynamiser (90-180j)",   color:T.gold,   data:medProds,  action:"Newsletter + Offre groupée",       discount:10,   urgency:"À SURVEILLER",   tip:"Proposer en lot avec des best-sellers pour relancer les ventes."},
+    {id:"rupt", icon:"ALRT", label:"Ruptures de stock",       color:T.red,    data:ruptProds, action:"Relance fournisseur urgente",      discount:null, urgency:"URGENT",         tip:"Chaque jour de rupture = ventes manquées. Activer la liste d'attente."},
+    ...(sales?[{id:"sale",icon:"SALE",label:"Candidats soldes",color:"#c060a0",data:saleProds,action:"Solde -30 à -50 %",discount:40,urgency:"MODE SOLDES",tip:"Sélection intelligente basée sur rotation et stock disponible."}]:[]),
   ];
-  const ALL_TABS = [{id:"all",label:"Tout voir",icon:"â—Ž"},...GROUPS];
+  const ALL_TABS = [{id:"all",label:"Tout voir",icon:"ALL"},...GROUPS];
   const displayGroups = promoF==="all" ? GROUPS : GROUPS.filter(g=>g.id===promoF);
   const togglePromoSelect = id => {
     setSelectedPromoIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -889,24 +964,24 @@ function ReportingModule() {
 
   return (
     <div style={{padding:"28px 32px"}}>
-      <SectionTitle sub="DonnÃ©es temps rÃ©el Â· Sage + PrestaShop via Atoo-Sync">Reporting & OpÃ©rations Promotionnelles</SectionTitle>
+      <SectionTitle sub="Données temps réel · Sage + PrestaShop via Atoo-Sync">Reporting & Opérations Promotionnelles</SectionTitle>
 
       {/* KPIs */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(155px,1fr))",gap:12,marginBottom:28}}>
-        <KpiCard icon="ðŸ’¼" label="CA Sage 6 mois"   value={(totalS/1000).toFixed(0)+"k â‚¬"} color={T.bronze} sub="Ventes directes"/>
-        <KpiCard icon="ðŸ›’" label="CA PrestaShop"    value={(totalP/1000).toFixed(0)+"k â‚¬"} color={T.blue}   sub="E-commerce"/>
-        <KpiCard icon="ðŸ“¦" label="Valeur du stock"  value={(PRODUCTS.reduce((s,p)=>s+p.priceShop*p.stock,0)/1000).toFixed(0)+"k â‚¬"} color={T.gold} sub="Prix public TTC"/>
-        <KpiCard icon="ðŸš¨" label="Ruptures"         value={ruptProds.length}  color={T.red}    sub="Ã€ commander"/>
-        <KpiCard icon="ðŸ¢" label="Rotation lente"   value={slowProds.length}  color={T.orange} sub="DÃ©stocker"/>
-        <KpiCard icon="ðŸ†•" label="NouveautÃ©s"       value={newProds.length}   color={T.green}  sub="Ã€ promouvoir"/>
+        <KpiCard icon="SAG" label="CA Sage 6 mois"   value={(totalS/1000).toFixed(0)+`k ${CURRENCY}`} color={T.bronze} sub="Ventes directes"/>
+        <KpiCard icon="WEB" label="CA PrestaShop"    value={(totalP/1000).toFixed(0)+`k ${CURRENCY}`} color={T.blue}   sub="E-commerce"/>
+        <KpiCard icon="STK" label="Valeur du stock"  value={(PRODUCTS.reduce((s,p)=>s+p.priceShop*p.stock,0)/1000).toFixed(0)+`k ${CURRENCY}`} color={T.gold} sub="Prix public TTC"/>
+        <KpiCard icon="RUP" label="Ruptures"         value={ruptProds.length}  color={T.red}    sub="À commander"/>
+        <KpiCard icon="LENT" label="Rotation lente"   value={slowProds.length}  color={T.orange} sub="Déstocker"/>
+        <KpiCard icon="NEW" label="Nouveautés"       value={newProds.length}   color={T.green}  sub="À promouvoir"/>
       </div>
 
       {/* Chart */}
       <div style={{background:T.panel,borderRadius:18,padding:28,marginBottom:24,border:`1px solid ${T.border}`}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:24}}>
           <div>
-            <h3 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:18,fontWeight:600,color:T.ivory,margin:"0 0 4px"}}>Ã‰volution du chiffre d'affaires</h3>
-            <p style={{margin:0,fontSize:11,color:T.ivoryMuted}}>6 derniers mois Â· Sage vs PrestaShop</p>
+            <h3 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:18,fontWeight:600,color:T.ivory,margin:"0 0 4px"}}>Évolution du chiffre d'affaires</h3>
+            <p style={{margin:0,fontSize:11,color:T.ivoryMuted}}>6 derniers mois · Sage vs PrestaShop</p>
           </div>
           <div style={{display:"flex",gap:20}}>
             {[{c:T.bronze,l:"Sage",v:totalS},{c:T.blue,l:"PrestaShop",v:totalP}].map(({c,l,v})=>(
@@ -915,7 +990,7 @@ function ReportingModule() {
                   <div style={{width:8,height:8,borderRadius:2,background:c}}/>
                   <span style={{fontSize:10,color:T.ivoryMuted,textTransform:"uppercase",letterSpacing:.8}}>{l}</span>
                 </div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:500,color:c}}>{(v/1000).toFixed(0)}k â‚¬</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:18,fontWeight:500,color:c}}>{(v/1000).toFixed(0)}k {CURRENCY}</div>
               </div>
             ))}
           </div>
@@ -957,7 +1032,7 @@ function ReportingModule() {
         </div>
         {/* CA catÃ©gories */}
         <div style={{background:T.panel,borderRadius:18,padding:22,border:`1px solid ${T.border}`}}>
-          <h3 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:16,fontWeight:600,color:T.ivory,margin:"0 0 18px"}}>CA par catÃ©gorie</h3>
+          <h3 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:16,fontWeight:600,color:T.ivory,margin:"0 0 18px"}}>CA par catégorie</h3>
           {CATS.map(cat=>{
             const prods=PRODUCTS.filter(p=>p.category===cat);
             const ca=prods.reduce((s,p)=>s+p.priceShop*p.sales,0);
@@ -971,7 +1046,7 @@ function ReportingModule() {
                     <div style={{height:"100%",width:(ca/maxCa*100)+"%",background:T.bronze,borderRadius:2}}/>
                   </div>
                 </div>
-                <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.bronze,minWidth:48,textAlign:"right"}}>{(ca/1000).toFixed(0)}k â‚¬</div>
+                <div style={{fontFamily:"'DM Mono',monospace",fontSize:11,color:T.bronze,minWidth:48,textAlign:"right"}}>{(ca/1000).toFixed(0)}k {CURRENCY}</div>
               </div>
             );
           })}
@@ -1069,8 +1144,8 @@ function ReportingModule() {
                     <div style={{fontSize:10,color:T.ivoryMuted,marginTop:2,fontFamily:"'DM Mono',monospace"}}>{p.ref} Â· {p.daysInStock}j stock Â· {p.stock}u Â· {p.sales} ventes</div>
                   </div>
                   <div style={{textAlign:"right",flexShrink:0}}>
-                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:dp?T.inkMuted:T.ink,fontWeight:dp?"400":"500",textDecoration:dp?"line-through":"none"}}>{p.priceShop.toLocaleString("fr-FR")} â‚¬</div>
-                    {dp&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:group.color,fontWeight:500}}>{dp.toLocaleString("fr-FR")} â‚¬ <span style={{fontSize:10,opacity:.8}}>âˆ’{group.discount}%</span></div>}
+                    <div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:dp?T.inkMuted:T.ink,fontWeight:dp?"400":"500",textDecoration:dp?"line-through":"none"}}>{money(p.priceShop)}</div>
+                    {dp&&<div style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:group.color,fontWeight:500}}>{money(dp)} <span style={{fontSize:10,opacity:.8}}>-{group.discount}%</span></div>}
                   </div>
                   <div style={{display:"flex",gap:6,flexShrink:0}}>
                     <button style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",background:group.color+"22",color:group.color,fontSize:11,fontWeight:700,fontFamily:"inherit"}}>Appliquer</button>
@@ -1150,7 +1225,7 @@ function StudioModule() {
     {id:"badge",name:"Badge",          type:"badge",     visible:true, text:t.badge, color:t.accent, tc:t.bg==="#f0ece2"?"#1a1208":"#fff", top:"9%"},
     {id:"prod", name:"Produit",        type:"product",   visible:true, emoji:p.image, top:"26%"},
     {id:"title",name:"Titre",          type:"text",      visible:true, text:p.name, color:t.bg==="#f0ece2"?"#2a1e10":"#f0ece2", size:12, weight:600, top:"59%"},
-    {id:"price",name:"Prix",           type:"price",     visible:true, text:p.priceShop.toLocaleString("fr-FR")+" â‚¬", color:t.accent, size:20, top:"71%"},
+    {id:"price",name:"Prix",           type:"price",     visible:true, text:money(p.priceShop), color:t.accent, size:20, top:"71%"},
   ];
   const [layers,setLayers] = useState(()=>makeLayers(TEMPLATES[0],PRODUCTS[0]));
 
@@ -1160,7 +1235,7 @@ function StudioModule() {
     setLayers(prev=>prev.map(l=>
       l.type==="product"?{...l,emoji:p.image,name:"Produit â€” "+p.name}
       :l.id==="title"?{...l,text:p.name}
-      :l.id==="price"?{...l,text:p.priceShop.toLocaleString("fr-FR")+" â‚¬"}
+      :l.id==="price"?{...l,text:money(p.priceShop)}
       :l));
   };
   const upd = (id,up)=>setLayers(prev=>prev.map(l=>l.id===id?{...l,...up}:l));
@@ -1173,7 +1248,7 @@ function StudioModule() {
   };
   const sel  = layers.find(l=>l.id===selId);
   const dim  = FMTS[fmt]||FMTS["Post CarrÃ© (1:1)"];
-  const LICONS = {background:"â—¼",product:"ðŸ“¦",text:"T",badge:"ðŸ·",shape:"â—»",logo:"â­",price:"â‚¬"};
+  const LICONS = {background:"â—¼",product:"ðŸ“¦",text:"T",badge:"ðŸ·",shape:"â—»",logo:"â­",price:CURRENCY};
 
   return (
     <div style={{display:"flex",height:"calc(100vh - 112px)",minHeight:580,overflow:"hidden"}}>
@@ -1279,7 +1354,7 @@ function StudioModule() {
                     <span style={{fontSize:18}}>{p.image}</span>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={{fontSize:11,color:T.ink,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
-                      <div style={{fontSize:9,color:T.ivoryMuted,fontFamily:"'DM Mono',monospace"}}>{p.priceShop.toLocaleString("fr-FR")} â‚¬ Â· {p.stock}u</div>
+                      <div style={{fontSize:9,color:T.ivoryMuted,fontFamily:"'DM Mono',monospace"}}>{money(p.priceShop)} · {p.stock}u</div>
                     </div>
                   </div>
                 ))}
@@ -1383,12 +1458,12 @@ function AssistantModule() {
   const respond = q=>{
     const lq=q.toLowerCase();
     if(lq.includes("rupture")||lq.includes("stock"))return `Ruptures de stock dÃ©tectÃ©es :\n${PRODUCTS.filter(p=>p.stock===0).map(p=>`â€¢ ${p.image} ${p.name} â€” ${p.ref}`).join("\n")}\n\nRecommandation immÃ©diate : relancer la commande fournisseur et activer la liste d'attente sur PrestaShop pour ces rÃ©fÃ©rences.`;
-    if(lq.includes("rotation")||lq.includes("lent")||lq.includes("solder"))return `${PRODUCTS.filter(p=>p.daysInStock>150).length} produits Ã  rotation lente (>150 jours) :\n${PRODUCTS.filter(p=>p.daysInStock>150).sort((a,b)=>b.daysInStock-a.daysInStock).map(p=>`â€¢ ${p.image} ${p.name} â€” ${p.daysInStock}j â€” prix soldÃ© suggÃ©rÃ© : ${Math.round(p.priceShop*.75).toLocaleString("fr-FR")} â‚¬ (âˆ’25%)`).join("\n")}\n\nStratÃ©gie : crÃ©er un lot Â«DÃ©couverte MaisonÂ» combinant ces piÃ¨ces avec des best-sellers pour dÃ©stocker sans casser l'image prix.`;
-    if(lq.includes("campagne")||lq.includes("canapÃ©"))return `Plan campagne â€” Collection CanapÃ©s :\n\nâ‘  Instagram Â· mise en scÃ¨ne lifestyle du CanapÃ© Velours Anthracite dans un intÃ©rieur complet\nâ‘¡ Email ciblÃ© Â· segment Â«IntÃ©ressÃ©s salonÂ» Â· offre dÃ©couverte âˆ’10%\nâ‘¢ Google Shopping Â· enchÃ¨res renforcÃ©es sur la gamme canapÃ©s printemps\nâ‘£ Vitrine magasin Â· espace Â«Salon completÂ» CanapÃ© + Table + Fauteuil\n\nBudget suggÃ©rÃ© : 300 â‚¬ Meta Ads Â· ROI estimÃ© : Ã—4\n\nJe peux gÃ©nÃ©rer les visuels directement dans le Studio.`;
-    if(lq.includes("marge")||lq.includes("catÃ©gorie"))return `Analyse des marges par catÃ©gorie :\n\nðŸ† Meilleures marges\nâ€¢ Chaises +24% Â· Luminaires +23% Â· DÃ©coration +22%\n\nâš  Ã€ surveiller\nâ€¢ Literie +18% Â· Rangement +19%\n\nRecommandation : privilÃ©gier Chaises, Luminaires et DÃ©coration dans les communications pour maximiser la rentabilitÃ© par â‚¬ investi.`;
-    if(lq.includes("star")||lq.includes("meilleur")){const t=[...PRODUCTS].sort((a,b)=>b.sales-a.sales)[0];return `Produit star : ${t.image} ${t.name}\n\nâ†’ ${t.sales} unitÃ©s vendues\nâ†’ Prix boutique : ${t.priceShop.toLocaleString("fr-FR")} â‚¬\nâ†’ Marge : +${(((t.priceShop-t.price)/t.price)*100).toFixed(0)}%\nâ†’ Stock restant : ${t.stock} u.\n\nConseil : l'utiliser comme produit d'appel dans vos publicitÃ©s et proposer des ventes croisÃ©es avec des complÃ©ments de dÃ©coration.`;}
+    if(lq.includes("rotation")||lq.includes("lent")||lq.includes("solder"))return `${PRODUCTS.filter(p=>p.daysInStock>150).length} produits Ã  rotation lente (>150 jours) :\n${PRODUCTS.filter(p=>p.daysInStock>150).sort((a,b)=>b.daysInStock-a.daysInStock).map(p=>`â€¢ ${p.image} ${p.name} â€” ${p.daysInStock}j â€” prix soldÃ© suggÃ©rÃ© : ${money(Math.round(p.priceShop*.75))} (-25%)`).join("\n")}\n\nStratÃ©gie : crÃ©er un lot Â«DÃ©couverte MaisonÂ» combinant ces piÃ¨ces avec des best-sellers pour dÃ©stocker sans casser l'image prix.`;
+    if(lq.includes("campagne")||lq.includes("canapÃ©"))return `Plan campagne â€” Collection CanapÃ©s :\n\nâ‘  Instagram Â· mise en scÃ¨ne lifestyle du CanapÃ© Velours Anthracite dans un intÃ©rieur complet\nâ‘¡ Email ciblÃ© Â· segment Â«IntÃ©ressÃ©s salonÂ» Â· offre dÃ©couverte âˆ’10%\nâ‘¢ Google Shopping Â· enchÃ¨res renforcÃ©es sur la gamme canapÃ©s printemps\nâ‘£ Vitrine magasin Â· espace Â«Salon completÂ» CanapÃ© + Table + Fauteuil\n\nBudget suggÃ©rÃ© : 300 ${CURRENCY} Meta Ads Â· ROI estimÃ© : Ã—4\n\nJe peux gÃ©nÃ©rer les visuels directement dans le Studio.`;
+    if(lq.includes("marge")||lq.includes("catÃ©gorie"))return `Analyse des marges par catÃ©gorie :\n\nðŸ† Meilleures marges\nâ€¢ Chaises +24% Â· Luminaires +23% Â· DÃ©coration +22%\n\nâš  Ã€ surveiller\nâ€¢ Literie +18% Â· Rangement +19%\n\nRecommandation : privilÃ©gier Chaises, Luminaires et DÃ©coration dans les communications pour maximiser la rentabilitÃ© par ${CURRENCY} investi.`;
+    if(lq.includes("star")||lq.includes("meilleur")){const t=[...PRODUCTS].sort((a,b)=>b.sales-a.sales)[0];return `Produit star : ${t.image} ${t.name}\n\nâ†’ ${t.sales} unitÃ©s vendues\nâ†’ Prix boutique : ${money(t.priceShop)}\nâ†’ Marge : +${(((t.priceShop-t.price)/t.price)*100).toFixed(0)}%\nâ†’ Stock restant : ${t.stock} u.\n\nConseil : l'utiliser comme produit d'appel dans vos publicitÃ©s et proposer des ventes croisÃ©es avec des complÃ©ments de dÃ©coration.`;}
     if(lq.includes("promouvoir")||lq.includes("semaine")||lq.includes("mois"))return `Plan promotionnel house-store.com :\n\nâ‘  NOUVEAUTÃ‰S (prioritÃ© 1)\nFauteuil Bouclette + Table Marbre Â· homepage + Instagram\n\nâ‘¡ DÃ‰STOCKER (prioritÃ© 2)\nTapis BerbÃ¨re + Armoire + BibliothÃ¨que Â· page Â«Ventes FlashÂ» âˆ’20%\n\nâ‘¢ BOOSTER LES STARS\nChaise Velours + Lampadaire Â· offre Â«ComplÃ©ter votre intÃ©rieurÂ»\n\nâ‘£ URGENCE STOCK\nRelancer commande Armoire Haussmannienne (rupture)\n\nSouhaitez-vous le planning Ã©ditorial complet ?`;
-    return `Vue d'ensemble de votre catalogue :\n\nâ†’ ${PRODUCTS.length} rÃ©fÃ©rences Â· ${[...new Set(PRODUCTS.map(p=>p.category))].length} catÃ©gories\nâ†’ ${PRODUCTS.filter(p=>p.sage&&p.presta).length}/${PRODUCTS.length} produits synchronisÃ©s Atoo-Sync\nâ†’ ${PRODUCTS.filter(p=>p.isNew).length} nouveautÃ©s Ã  promouvoir\nâ†’ ${PRODUCTS.filter(p=>p.daysInStock>150).length} rÃ©fÃ©rences Ã  dÃ©stocker\nâ†’ Valeur totale du stock : ${PRODUCTS.reduce((s,p)=>s+p.priceShop*p.stock,0).toLocaleString("fr-FR")} â‚¬\n\nComment puis-je affiner cette analyse ?`;
+    return `Vue d'ensemble de votre catalogue :\n\nâ†’ ${PRODUCTS.length} rÃ©fÃ©rences Â· ${[...new Set(PRODUCTS.map(p=>p.category))].length} catÃ©gories\nâ†’ ${PRODUCTS.filter(p=>p.sage&&p.presta).length}/${PRODUCTS.length} produits synchronisÃ©s Atoo-Sync\nâ†’ ${PRODUCTS.filter(p=>p.isNew).length} nouveautÃ©s Ã  promouvoir\nâ†’ ${PRODUCTS.filter(p=>p.daysInStock>150).length} rÃ©fÃ©rences Ã  dÃ©stocker\nâ†’ Valeur totale du stock : ${money(PRODUCTS.reduce((s,p)=>s+p.priceShop*p.stock,0))}\n\nComment puis-je affiner cette analyse ?`;
   };
 
   const send = async msg => {
