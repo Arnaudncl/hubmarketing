@@ -4,7 +4,8 @@ setlocal
 set "ROOT=%~dp0"
 
 echo [HubMarketing] Demarrage du superviseur...
-start "HubMarketing Supervisor" cmd /k "cd /d ""%ROOT%hubmarketing-ui\server"" && npm run supervisor"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList '/c cd /d ""%ROOT%hubmarketing-ui\server"" && npm run supervisor'"
 
 timeout /t 2 /nobreak >nul
 
@@ -14,7 +15,8 @@ powershell -NoProfile -Command "try { Invoke-RestMethod -Method Post -Uri 'http:
 timeout /t 1 /nobreak >nul
 
 echo [HubMarketing] Demarrage du front...
-start "HubMarketing UI" cmd /k "cd /d ""%ROOT%hubmarketing-ui"" && npm run dev"
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList '/c cd /d ""%ROOT%hubmarketing-ui"" && npm run dev'"
 
 timeout /t 2 /nobreak >nul
 

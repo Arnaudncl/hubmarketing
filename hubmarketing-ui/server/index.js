@@ -172,8 +172,8 @@ app.get('/api/sage/health', async (_req, res) => {
 
 app.get('/api/sage/products', async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 200), 1000);
-    const rows = await runQuery(`SELECT TOP (${limit}) * FROM ${TABLE_PRODUCTS} ORDER BY 1 DESC`);
+    const limit = Math.min(Number(req.query.limit || 5000), 50000);
+    const rows = await runQuery(`SELECT TOP (${limit}) * FROM ${TABLE_PRODUCTS} ORDER BY AR_Ref ASC`);
     res.json({ ok: true, count: rows.length, rows });
   } catch (error) {
     res.status(500).json({ ok: false, source: 'sage', message: error.message });
@@ -182,8 +182,8 @@ app.get('/api/sage/products', async (req, res) => {
 
 app.get('/api/sage/stock', async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 500), 2000);
-    const rows = await runQuery(`SELECT TOP (${limit}) * FROM ${TABLE_STOCK} ORDER BY 1 DESC`);
+    const limit = Math.min(Number(req.query.limit || 5000), 100000);
+    const rows = await runQuery(`SELECT TOP (${limit}) * FROM ${TABLE_STOCK} ORDER BY AR_Ref ASC`);
     res.json({ ok: true, count: rows.length, rows });
   } catch (error) {
     res.status(500).json({ ok: false, source: 'sage', message: error.message });
@@ -209,30 +209,34 @@ app.get('/api/sage/sales', async (req, res) => {
 app.post('/api/sage/sales-by-refs', async (req, res) => {
   try {
     const refsRaw = Array.isArray(req.body?.refs) ? req.body.refs : [];
-    const refs = [...new Set(refsRaw.map(r => String(r || '').trim().toUpperCase()).filter(Boolean))].slice(0, 5000);
+    const refs = [...new Set(refsRaw.map(r => String(r || '').trim().toUpperCase()).filter(Boolean))].slice(0, 20000);
     if (refs.length === 0) return res.json({ ok: true, count: 0, map: {} });
 
-    const p = await getPool();
-    const request = p.request();
-    const placeholders = refs.map((ref, i) => {
-      const key = `r${i}`;
-      request.input(key, sql.NVarChar(64), ref);
-      return `@${key}`;
-    });
-
-    const q = `
-      SELECT UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) AS Ref,
-             SUM(CASE WHEN TRY_CONVERT(float, DL_Qte) IS NULL THEN 0 ELSE TRY_CONVERT(float, DL_Qte) END) AS Qty
-      FROM ${TABLE_SALES_LINES}
-      WHERE UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) IN (${placeholders.join(',')})
-        AND ${SAGE_SALES_FILTER}
-      GROUP BY UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64)))))
-    `;
-    const result = await request.query(q);
     const map = {};
-    (result.recordset || []).forEach(r => {
-      map[String(r.Ref || '').toUpperCase()] = Number(r.Qty || 0);
-    });
+    const chunkSize = 1000; // keep under SQL parameter limits
+    const p = await getPool();
+    for (let offset = 0; offset < refs.length; offset += chunkSize) {
+      const chunk = refs.slice(offset, offset + chunkSize);
+      const request = p.request();
+      const placeholders = chunk.map((ref, i) => {
+        const key = `r${i}`;
+        request.input(key, sql.NVarChar(64), ref);
+        return `@${key}`;
+      });
+      const q = `
+        SELECT UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) AS Ref,
+               SUM(CASE WHEN TRY_CONVERT(float, DL_Qte) IS NULL THEN 0 ELSE TRY_CONVERT(float, DL_Qte) END) AS Qty
+        FROM ${TABLE_SALES_LINES}
+        WHERE UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64))))) IN (${placeholders.join(',')})
+          AND ${SAGE_SALES_FILTER}
+        GROUP BY UPPER(LTRIM(RTRIM(CAST(AR_Ref AS NVARCHAR(64)))))
+      `;
+      const result = await request.query(q);
+      (result.recordset || []).forEach(r => {
+        const key = String(r.Ref || '').toUpperCase();
+        map[key] = (map[key] || 0) + Number(r.Qty || 0);
+      });
+    }
     res.json({ ok: true, count: Object.keys(map).length, map });
   } catch (error) {
     res.status(500).json({ ok: false, source: 'sage', message: error.message });
@@ -251,16 +255,53 @@ app.get('/api/prestashop/health', async (_req, res) => {
 
 app.get('/api/prestashop/products', async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 300), 5000);
-    const data = await psGet('products', {
-      output_format: 'JSON',
-      display: 'full',
-      limit: `0,${limit}`,
-      sort: '[id_DESC]',
-    });
-
-    const products = toArray(data?.prestashop?.products?.product || data?.products || []);
+    const limit = Math.min(Number(req.query.limit || 300), 20000);
+    const batchSize = Math.min(Number(req.query.batch || 1000), 1000);
+    const products = [];
+    let offset = 0;
+    while (products.length < limit) {
+      const take = Math.min(batchSize, limit - products.length);
+      const data = await psGet('products', {
+        output_format: 'JSON',
+        display: 'full',
+        limit: `${offset},${take}`,
+        sort: '[id_DESC]',
+      });
+      const rows = toArray(data?.prestashop?.products?.product || data?.products || []);
+      if (!rows.length) break;
+      products.push(...rows);
+      if (rows.length < take) break;
+      offset += take;
+    }
     res.json({ ok: true, count: products.length, rows: products });
+  } catch (error) {
+    res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
+  }
+});
+
+app.post('/api/prestashop/products-by-ids', async (req, res) => {
+  try {
+    const idsRaw = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const ids = [...new Set(idsRaw.map(v => Number(v)).filter(v => Number.isFinite(v) && v > 0))].slice(0, 2000);
+    if (!ids.length) return res.json({ ok: true, count: 0, rows: [] });
+
+    const rows = [];
+    for (const id of ids) {
+      try {
+        const data = await psGet('products', {
+          output_format: 'JSON',
+          display: 'full',
+          'filter[id]': `[${id}]`,
+          limit: '0,1',
+        });
+        const arr = toArray(data?.prestashop?.products?.product || data?.products || []);
+        if (arr[0]) rows.push(arr[0]);
+      } catch {
+        // skip invalid/inaccessible product ids
+      }
+    }
+
+    res.json({ ok: true, count: rows.length, rows });
   } catch (error) {
     res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
   }
@@ -268,15 +309,24 @@ app.get('/api/prestashop/products', async (req, res) => {
 
 app.get('/api/prestashop/combinations', async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit || 1000), 10000);
-    const data = await psGet('combinations', {
-      output_format: 'JSON',
-      display: 'full',
-      limit: `0,${limit}`,
-      sort: '[id_DESC]',
-    });
-
-    const combinations = toArray(data?.prestashop?.combinations?.combination || data?.combinations || []);
+    const limit = Math.min(Number(req.query.limit || 1000), 50000);
+    const batchSize = Math.min(Number(req.query.batch || 1000), 1000);
+    const combinations = [];
+    let offset = 0;
+    while (combinations.length < limit) {
+      const take = Math.min(batchSize, limit - combinations.length);
+      const data = await psGet('combinations', {
+        output_format: 'JSON',
+        display: 'full',
+        limit: `${offset},${take}`,
+        sort: '[id_DESC]',
+      });
+      const rows = toArray(data?.prestashop?.combinations?.combination || data?.combinations || []);
+      if (!rows.length) break;
+      combinations.push(...rows);
+      if (rows.length < take) break;
+      offset += take;
+    }
     res.json({ ok: true, count: combinations.length, rows: combinations });
   } catch (error) {
     res.status(500).json({ ok: false, source: 'prestashop', message: error.message });
@@ -410,24 +460,28 @@ app.get('/api/prestashop/orders', async (req, res) => {
 app.post('/api/prestashop/sales-by-refs', async (req, res) => {
   try {
     const refsRaw = Array.isArray(req.body?.refs) ? req.body.refs : [];
-    const refs = [...new Set(refsRaw.map(r => String(r || '').trim().toUpperCase()).filter(Boolean))].slice(0, 2000);
+    const refs = [...new Set(refsRaw.map(r => String(r || '').trim().toUpperCase()).filter(Boolean))].slice(0, 20000);
     if (refs.length === 0) return res.json({ ok: true, count: 0, map: {} });
 
-    const filter = `[${refs.join('|')}]`;
-    const data = await psGet('order_details', {
-      output_format: 'JSON',
-      display: 'full',
-      'filter[product_reference]': filter,
-      limit: '0,50000',
-    });
-    const rows = toArray(data?.prestashop?.order_details?.order_detail || data?.order_details || []);
     const map = {};
-    rows.forEach(r => {
-      const ref = String(r.product_reference || '').trim().toUpperCase();
-      if (!ref) return;
-      const qty = Number(r.product_quantity || r.quantity || 0) || 0;
-      map[ref] = (map[ref] || 0) + Math.max(0, qty);
-    });
+    const chunkSize = 250; // avoid overly long query strings to Presta
+    for (let offset = 0; offset < refs.length; offset += chunkSize) {
+      const chunk = refs.slice(offset, offset + chunkSize);
+      const filter = `[${chunk.join('|')}]`;
+      const data = await psGet('order_details', {
+        output_format: 'JSON',
+        display: 'full',
+        'filter[product_reference]': filter,
+        limit: '0,50000',
+      });
+      const rows = toArray(data?.prestashop?.order_details?.order_detail || data?.order_details || []);
+      rows.forEach(r => {
+        const ref = String(r.product_reference || '').trim().toUpperCase();
+        if (!ref) return;
+        const qty = Number(r.product_quantity || r.quantity || 0) || 0;
+        map[ref] = (map[ref] || 0) + Math.max(0, qty);
+      });
+    }
 
     res.json({ ok: true, count: Object.keys(map).length, map });
   } catch (error) {

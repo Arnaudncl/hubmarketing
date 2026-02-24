@@ -90,6 +90,17 @@ const mojibakeFix = val => {
     return s;
   }
 };
+const fixMojibakeTextTree = root => {
+  if (!root) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const original = node.nodeValue || "";
+    const fixed = mojibakeFix(original);
+    if (fixed !== original) node.nodeValue = fixed;
+    node = walker.nextNode();
+  }
+};
 const money = n => `${Number(n || 0).toLocaleString("fr-FR")} ${CURRENCY}`;
 const stripHtml = s => String(s || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 const daysSince = dateStr => {
@@ -212,8 +223,9 @@ function mapPrestaProducts(
     });
   });
   const stockQtyFromRow = row => pickFirstNum(row, ["AS_QteSto", "QteStock", "STK_Real", "STK_Reel", "Quantity", "quantity", "Qte", "Stock"]);
+  const pickSageTTC = row => pickFirstNum(row, ["AR_PrixVen", "AR_PrixVente", "PV_TTC", "PrixTTC", "PriceTTC"]);
 
-  return psProducts.slice(0, 3000).map((p, idx) => {
+  const mapped = psProducts.map((p, idx) => {
     const id = toNum(p.id) || idx + 1;
     const name = stripHtml(p.name || `Produit ${id}`);
     const category = categoryMap[String(p.id_category_default || "")] || catFromPresta(p.id_category_default);
@@ -245,7 +257,6 @@ function mapPrestaProducts(
     const variantRefs = comboRefsByProduct.get(id) || [];
     const combosForProduct = psCombinations.filter(c => toNum(c.id_product) === id);
     const toUpper = v => String(v || "").trim().toUpperCase();
-    const pickSageTTC = row => pickFirstNum(row, ["AR_PrixVen", "AR_PrixVente", "PV_TTC", "PrixTTC", "PriceTTC"]);
     const variations = combosForProduct.map(c => {
       const cref = String(c.reference || "").trim();
       const crefU = toUpper(cref);
@@ -339,6 +350,82 @@ function mapPrestaProducts(
       createdAt,
     };
   });
+
+  const existingRefs = new Set();
+  mapped.forEach(p => {
+    const baseRef = String(p.ref || "").trim().toUpperCase();
+    if (baseRef) existingRefs.add(baseRef);
+    String(p.variantRefs || "")
+      .split(/\s+/)
+      .map(x => x.trim().toUpperCase())
+      .filter(Boolean)
+      .forEach(x => existingRefs.add(x));
+  });
+
+  const pickSageName = row => {
+    const raw = row?.AR_Design || row?.Design || row?.designation || row?.DESIGN || row?.LIBELLE || row?.Libelle;
+    const txt = stripHtml(raw || "").trim();
+    return txt || "Article Sage";
+  };
+  const pickSageCategory = row => {
+    const raw = row?.FA_Design || row?.Famille || row?.family || row?.Categorie || row?.Category || "";
+    const txt = stripHtml(raw || "").trim();
+    return txt || "Non classé";
+  };
+
+  const extras = [];
+  sageProducts.forEach((r, idx) => {
+    const ref = String(r.AR_Ref || r.Reference || r.reference || "").trim().toUpperCase();
+    if (!ref || existingRefs.has(ref)) return;
+
+    const sageRow = sageByRef.get(ref) || r;
+    const stockRow = stockByRef.get(ref) || null;
+    const stock = Math.max(0, Math.round(stockQtyFromRow(stockRow)));
+    const taxRate = 0;
+    const priceSageTtc = pickSageTTC(sageRow) || 0;
+    const salesSage = Math.round(sageSalesByRef.get(ref) || 0);
+    const salesPresta = Math.round(prestaSalesByRef.get(ref) || 0);
+    const sales = salesSage + salesPresta;
+    const createdAt = String(r.cbCreation || r.AR_DateCreation || new Date().toISOString()).slice(0, 10);
+
+    extras.push({
+      id: 9000000 + idx,
+      ref,
+      displayRef: ref,
+      variantRefs: "",
+      hasVariants: false,
+      variations: [],
+      name: pickSageName(r),
+      stock,
+      stockMin: Math.max(1, Math.min(8, Math.ceil(Math.max(1, stock * 0.2)))),
+      price: Math.round(priceSageTtc || pickFirstNum(sageRow, ["AR_PrixVen", "AR_PrixVente", "PV_HT", "PrixHT"])),
+      priceShop: Math.round(priceSageTtc || 0),
+      priceTTC: Math.round(priceSageTtc || 0),
+      priceSageTtc: priceSageTtc || null,
+      taxRate,
+      cmup: pickFirstNum(sageRow, ["CMUP", "cmup", "PMP", "pmp", "AR_PrixAch", "AR_PrixAchat", "PrixAchat", "PA"]) || null,
+      image: "PRD",
+      imageUrl: null,
+      imageProxyUrl: null,
+      category: pickSageCategory(r),
+      sage: true,
+      presta: false,
+      sales,
+      salesSage,
+      salesPresta,
+      daysInStock: daysSince(createdAt),
+      isNew: daysSince(createdAt) <= 45,
+      weight: `${toNum(r.Poids || r.Weight || 0)}kg`,
+      dimensions: `${toNum(r.Largeur || r.Width || 0)}x${toNum(r.Profondeur || r.Depth || 0)}x${toNum(r.Hauteur || r.Height || 0)}cm`,
+      supplier: stripHtml(r.Fournisseur || r.Supplier || "N/A"),
+      productUrl: null,
+      productSlug: "",
+      description: "Fiche issue de Sage (non chargée depuis PrestaShop).",
+      createdAt,
+    });
+  });
+
+  return [...mapped, ...extras];
 }
 
 const stockStatus = p => p.stock === 0 ? {label:"Rupture", c:T.red} : p.stock <= p.stockMin ? {label:"Critique", c:T.orange} : {label:"OK", c:T.green};
@@ -774,6 +861,7 @@ function ProductsModule() {
 function ReportingModule() {
   const [promoF, setPromoF] = useState("all");
   const [sales,  setSales]  = useState(false);
+  const [selectedPromoIds, setSelectedPromoIds] = useState([]);
 
   const totalS = SALES.reduce((s,d)=>s+d.sage,0);
   const totalP = SALES.reduce((s,d)=>s+d.presta,0);
@@ -794,6 +882,10 @@ function ReportingModule() {
   ];
   const ALL_TABS = [{id:"all",label:"Tout voir",icon:"â—Ž"},...GROUPS];
   const displayGroups = promoF==="all" ? GROUPS : GROUPS.filter(g=>g.id===promoF);
+  const togglePromoSelect = id => {
+    setSelectedPromoIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+  const clearPromoSelection = () => setSelectedPromoIds([]);
 
   return (
     <div style={{padding:"28px 32px"}}>
@@ -918,6 +1010,26 @@ function ReportingModule() {
             </Pill>
           ))}
         </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,background:T.panelRaised,border:`1px solid ${T.border}`,borderRadius:10,padding:"8px 12px"}}>
+          <div style={{fontSize:11,color:T.ivoryMuted}}>
+            Sélection: <b style={{color:T.ink}}>{selectedPromoIds.length}</b> article(s)
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button
+              onClick={clearPromoSelection}
+              disabled={selectedPromoIds.length===0}
+              style={{padding:"6px 10px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,fontSize:11,cursor:selectedPromoIds.length===0?"not-allowed":"pointer",opacity:selectedPromoIds.length===0?0.6:1}}
+            >
+              Vider
+            </button>
+            <button
+              disabled={selectedPromoIds.length===0}
+              style={{padding:"6px 12px",borderRadius:8,border:"none",background:T.bronze,color:"#fff",fontSize:11,cursor:selectedPromoIds.length===0?"not-allowed":"pointer",opacity:selectedPromoIds.length===0?0.6:1}}
+            >
+              Créer campagne ({selectedPromoIds.length})
+            </button>
+          </div>
+        </div>
 
         {displayGroups.filter(g=>g.data.length>0).map(group=>(
           <div key={group.id} style={{marginBottom:20,borderRadius:16,overflow:"hidden",border:`1px solid ${group.color}28`}}>
@@ -940,8 +1052,17 @@ function ReportingModule() {
             {/* Products rows */}
             {group.data.map((p,i)=>{
               const dp=group.discount?Math.round(p.priceShop*(1-group.discount/100)):null;
+              const checked = selectedPromoIds.includes(p.id);
               return (
                 <div key={p.id} style={{display:"flex",alignItems:"center",gap:14,padding:"13px 20px",background:i%2===0?T.bg+"66":"transparent",borderBottom:i<group.data.length-1?`1px solid ${T.border}22`:"none"}}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={()=>togglePromoSelect(p.id)}
+                    onClick={e=>e.stopPropagation()}
+                    style={{width:14,height:14,cursor:"pointer"}}
+                    title="Sélectionner l'article"
+                  />
                   <div style={{width:36,height:36,borderRadius:9,background:T.panelRaised,border:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{p.image}</div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:13,fontWeight:600,color:T.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
@@ -1411,24 +1532,40 @@ export default function App() {
       }
     };
     try {
-      const [sageHealth, psHealth, psProductsRes, psCombRes, psStockAvailRes, sageProductsRes, sageStockRes, sageSalesRes, psOrdersRes, taxRatesRes, categoriesRes, suppliersRes, povRes] = await Promise.all([
+      const [sageHealth, psHealth, psProductsRes, psCombRes, psStockAvailRes, sageProductsRes, sageStockRes, taxRatesRes, categoriesRes, suppliersRes, povRes] = await Promise.all([
         fetchJsonWithTimeout(`${API_BASE}/sage/health`, { ok: false }, {}, 10000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/health`, { ok: false }, {}, 10000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/products?limit=2000`, { rows: [] }, {}, 35000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/combinations?limit=6000`, { rows: [] }, {}, 35000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/products?limit=2000&batch=400`, { rows: [] }, {}, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/combinations?limit=6000&batch=400`, { rows: [] }, {}, 45000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/stock-availables?limit=20000`, { rows: [] }, {}, 45000),
-        fetchJsonWithTimeout(`${API_BASE}/sage/products?limit=2000`, { rows: [] }, {}, 20000),
+        fetchJsonWithTimeout(`${API_BASE}/sage/products?limit=5000`, { rows: [] }, {}, 30000),
         fetchJsonWithTimeout(`${API_BASE}/sage/stock?limit=3000`, { rows: [] }, {}, 20000),
-        fetchJsonWithTimeout(`${API_BASE}/sage/sales?limit=50000`, { rows: [] }, {}, 45000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/orders?limit=20000`, { rows: [] }, {}, 45000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/tax-rates?limit=5000`, { map: {} }, {}, 30000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/categories?limit=3000`, { rows: [] }, {}, 30000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/suppliers?limit=2000`, { rows: [] }, {}, 30000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/product-option-values?limit=10000`, { rows: [] }, {}, 30000),
       ]);
 
+      let psProductsRows = [...(psProductsRes.rows || [])];
+      const comboProductIds = new Set((psCombRes.rows || []).map(c => toNum(c.id_product)).filter(Boolean));
+      const existingProductIds = new Set(psProductsRows.map(p => toNum(p.id)).filter(Boolean));
+      const missingProductIds = [...comboProductIds].filter(id => !existingProductIds.has(id));
+      if (missingProductIds.length > 0) {
+        const extraProductsRes = await fetchJsonWithTimeout(
+          `${API_BASE}/prestashop/products-by-ids`,
+          { rows: [] },
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ids: missingProductIds }),
+          },
+          45000
+        );
+        psProductsRows = [...psProductsRows, ...(extraProductsRes.rows || [])];
+      }
+
       const refsSet = new Set();
-      (psProductsRes.rows || []).forEach(p => {
+      psProductsRows.forEach(p => {
         const r = String(p.reference || "").trim().toUpperCase();
         if (r) refsSet.add(r);
       });
@@ -1436,7 +1573,7 @@ export default function App() {
         const r = String(c.reference || "").trim().toUpperCase();
         if (r) refsSet.add(r);
       });
-      const refs = [...refsSet].slice(0, 5000);
+      const refs = [...refsSet].slice(0, 20000);
 
       const [sageByRefsRes, prestaByRefsRes] = await Promise.all([
         fetchJsonWithTimeout(`${API_BASE}/sage/sales-by-refs`, { map: {} }, {
@@ -1465,13 +1602,13 @@ export default function App() {
       });
 
       const liveProducts = mapPrestaProducts(
-        psProductsRes.rows || [],
+        psProductsRows || [],
         psCombRes.rows || [],
         psStockAvailRes.rows || [],
         sageProductsRes.rows || [],
         sageStockRes.rows || [],
-        sageSalesRes.rows || [],
-        psOrdersRes.rows || [],
+        [],
+        [],
         sageByRefsRes.map || {},
         prestaByRefsRes.map || {},
         taxRatesRes.map || {},
@@ -1512,6 +1649,21 @@ export default function App() {
   useEffect(() => {
     syncLiveData();
   }, [syncLiveData]);
+
+  useEffect(() => {
+    let raf = 0;
+    const runFix = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => fixMojibakeTextTree(document.body));
+    };
+    runFix();
+    const observer = new MutationObserver(() => runFix());
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     refreshBackendStatus();
@@ -1573,7 +1725,7 @@ export default function App() {
 
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
         {/* â”€â”€ SIDEBAR â”€â”€ */}
-        <nav style={{width:214,borderRight:`1px solid #1b2b3a`,background:"#23374a",padding:"18px 10px 18px",display:"flex",flexDirection:"column",flexShrink:0,position:"sticky",top:58,height:"calc(100vh - 58px)",overflowY:"auto"}}>
+        <nav style={{width:214,borderRight:`1px solid #1b2b3a`,background:"#23374a",padding:"18px 10px 18px",display:"flex",flexDirection:"column",flexShrink:0,position:"fixed",left:0,top:58,bottom:0,zIndex:180,overflowY:"auto"}}>
           {/* Nav items */}
           <div style={{display:"flex",flexDirection:"column",gap:2}}>
             {MODULES.map(m=>(
@@ -1637,7 +1789,7 @@ export default function App() {
         </nav>
 
         {/* â”€â”€ CONTENT â”€â”€ */}
-        <main style={{flex:1,overflow:active==="studio"?"hidden":"auto",display:"flex",flexDirection:"column"}}>
+        <main style={{flex:1,marginLeft:214,overflow:active==="studio"?"hidden":"auto",display:"flex",flexDirection:"column"}}>
           <div style={{flex:1,overflow:active==="studio"?"hidden":"auto",animation:"fadeIn .3s ease"}} key={`${active}-${PRODUCTS.length}`}>
             {hasLiveData ? CONTENT[active] : (
               <div style={{padding:"36px 32px",color:T.ink}}>
