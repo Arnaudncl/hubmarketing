@@ -1,4 +1,4 @@
-﻿import { useState, useRef, useEffect, useCallback } from "react";
+﻿import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    DESIGN SYSTEM â€” Luxury Editorial
@@ -83,7 +83,7 @@ const toNum = v => {
 };
 const mojibakeFix = val => {
   let s = String(val ?? "");
-  const bad = /(?:Ã.|Â.|â.|ð.|ï.|�)/;
+  const bad = /[ÃÂâðï�]/;
   if (!bad.test(s)) return s;
 
   const directMap = [
@@ -318,7 +318,8 @@ function mapPrestaProducts(
     const name = stripHtml(p.name || `Produit ${id}`);
     const category = categoryMap[String(p.id_category_default || "")] || catFromPresta(p.id_category_default);
     const imgs = p.associations?.images;
-    const imageId = (Array.isArray(imgs) ? imgs[0]?.id : imgs?.id) || p.id_default_image;
+    const rawImgId = (Array.isArray(imgs) ? imgs[0]?.id : imgs?.id) || p.id_default_image;
+    const imageId = toNum(readLocalized(rawImgId));
     const imagePath = imageId ? String(imageId).split("").join("/") : "";
     const imageUrl = imageId ? `${STORE_BASE}/img/p/${imagePath}/${imageId}.jpg` : null;
     const imageProxyUrl = imageId ? `${API_BASE}/prestashop/image/${id}/${imageId}` : null;
@@ -584,7 +585,7 @@ const SectionTitle = ({children, sub}) => (
 
 const ProductThumb = ({product, size=40}) => {
   const [srcIndex, setSrcIndex] = useState(0);
-  const imageSources = [product?.imageUrl, product?.imageProxyUrl].filter(Boolean);
+  const imageSources = [product?.imageProxyUrl, product?.imageUrl].filter(Boolean);
   const src = imageSources[srcIndex];
   const showImage = !!src;
   return (
@@ -598,7 +599,7 @@ const ProductThumb = ({product, size=40}) => {
           onError={()=>setSrcIndex(i => i + 1)}
         />
       ) : (
-        product.image || "📦"
+        product.image || "??"
       )}
     </div>
   );
@@ -606,6 +607,7 @@ const ProductThumb = ({product, size=40}) => {
 
 /* â”€â”€â”€ PRODUCT MODAL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 function ProductModal({product, onClose}) {
+  const [tab, setTab] = useState("fiche");
   const promo = promoType(product);
   const ss    = stockStatus(product);
   const margin = (((product.priceShop - product.price) / product.price)*100).toFixed(0);
@@ -632,15 +634,21 @@ function ProductModal({product, onClose}) {
             <div style={{fontSize:12,color:T.ivoryMuted,marginBottom:12,display:"flex",gap:10,flexWrap:"wrap"}}>
               <span style={{fontFamily:"'DM Mono',monospace",color:T.bronze,fontSize:11}}>{product.displayRef ? mojibakeFix(product.displayRef) : "—"}</span>
               <span style={{color:T.ivoryDeep}}>·</span>
-              <span>{CAT_ICONS[mojibakeFix(product.category)] || "📦"} {mojibakeFix(product.category)}</span>
+              <span>{CAT_ICONS[mojibakeFix(product.category)] || "??"} {mojibakeFix(product.category)}</span>
               <span style={{color:T.ivoryDeep}}>·</span>
               <span>{mojibakeFix(product.supplier)}</span>
             </div>
             <p style={{fontSize:13,color:T.inkDim,lineHeight:1.65,margin:0}}>{mojibakeFix(product.description)}</p>
           </div>
-          <button onClick={onClose} style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:10,width:36,height:36,cursor:"pointer",color:T.ivoryMuted,fontSize:16,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+          <button onClick={onClose} style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:10,width:36,height:36,cursor:"pointer",color:T.ivoryMuted,fontSize:16,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>?</button>
         </div>
 
+        <div style={{padding:"10px 32px 0",display:"flex",gap:8}}>
+          <Pill active={tab==="fiche"} onClick={()=>setTab("fiche")} color={T.bronze}>Fiche</Pill>
+          <Pill active={tab==="sales"} onClick={()=>setTab("sales")} color={T.gold}>Ventes</Pill>
+        </div>
+
+        {tab==="fiche" && (
         <div style={{padding:"24px 32px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
           {/* LEFT */}
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
@@ -684,7 +692,7 @@ function ProductModal({product, onClose}) {
               <div style={{display:"flex",gap:10}}>
                 {[{l:"Sage",ok:product.sage},{l:"PrestaShop",ok:product.presta}].map(s=>(
                   <div key={s.l} style={{flex:1,textAlign:"center",background:s.ok?T.green+"12":T.red+"12",border:`1px solid ${s.ok?T.green:T.red}30`,borderRadius:12,padding:"14px 0"}}>
-                    <div style={{fontSize:24,marginBottom:6}}>{s.ok?"✅":"❌"}</div>
+                    <div style={{fontSize:24,marginBottom:6}}>{s.ok?"?":"?"}</div>
                     <div style={{fontSize:11,color:s.ok?T.greenLight:T.redLight,fontWeight:700}}>{s.l}</div>
                     <div style={{fontSize:10,color:T.ivoryMuted,marginTop:2}}>{s.ok?"Synchronisé":"Non sync"}</div>
                   </div>
@@ -736,7 +744,7 @@ function ProductModal({product, onClose}) {
                 <div style={{height:"100%",width:Math.max(5,100-product.daysInStock/3)+"%",background:product.daysInStock>150?T.orange:product.daysInStock>90?T.gold:T.green,borderRadius:2}}/>
               </div>
               <div style={{fontSize:10,color:T.ivoryMuted,marginTop:6}}>
-                Score rotation : {product.daysInStock>150?"⚠ Faible — action recommandée":product.daysInStock>90?"◉ Moyen — à surveiller":"✓ Bon"}
+                Score rotation : {product.daysInStock>150?"? Faible — action recommandée":product.daysInStock>90?"? Moyen — à surveiller":"? Bon"}
               </div>
             </div>
 
@@ -747,7 +755,7 @@ function ProductModal({product, onClose}) {
                 <div style={{fontSize:12,color:T.inkDim,lineHeight:1.55,marginBottom:14}}>{mojibakeFix(promo.desc)}</div>
                 <div style={{display:"flex",gap:8}}>
                   <button style={{flex:1,padding:"9px",borderRadius:10,border:"none",cursor:"pointer",background:promo.c,color:"#fff",fontSize:12,fontWeight:700,fontFamily:"inherit"}}>Créer une campagne</button>
-                  <button style={{padding:"9px 14px",borderRadius:10,border:`1px solid ${promo.c}44`,cursor:"pointer",background:"transparent",color:promo.c,fontSize:12,fontFamily:"inherit"}}>Studio →</button>
+                  <button style={{padding:"9px 14px",borderRadius:10,border:`1px solid ${promo.c}44`,cursor:"pointer",background:"transparent",color:promo.c,fontSize:12,fontFamily:"inherit"}}>Studio ?</button>
                 </div>
               </div>
             )}
@@ -759,7 +767,7 @@ function ProductModal({product, onClose}) {
               <button
                 onClick={()=>product.productUrl && window.open(product.productUrl, "_blank", "noopener,noreferrer")}
                 style={{padding:"12px 16px",borderRadius:12,border:`1px solid ${T.border}`,cursor:"pointer",background:"transparent",color:T.ivoryMuted,fontSize:13,fontFamily:"inherit"}}
-              >↗</button>
+              >?</button>
             </div>
 
             {product.hasVariants && (
@@ -785,7 +793,7 @@ function ProductModal({product, onClose}) {
                             {v.sales || 0}
                             <span style={{fontSize:9,color:T.ivoryMuted}}> (S:{v.salesSage || 0} P:{v.salesPresta || 0})</span>
                           </td>
-                          <td style={{padding:"7px 8px"}}>{v.ttcMatch === null ? "—" : (v.ttcMatch ? "✅" : "⚠")}</td>
+                          <td style={{padding:"7px 8px"}}>{v.ttcMatch === null ? "—" : (v.ttcMatch ? "?" : "?")}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -795,6 +803,69 @@ function ProductModal({product, onClose}) {
             )}
           </div>
         </div>
+        )}
+
+        {tab==="sales" && (
+          <div style={{padding:"22px 32px 28px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+            <div style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:12,padding:16}}>
+              <div style={{fontSize:9,color:T.ivoryMuted,textTransform:"uppercase",letterSpacing:1.2,marginBottom:8}}>Totaux ventes</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div style={{background:T.panelRaised,border:`1px solid ${T.border}`,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:10,color:T.ivoryMuted}}>Sage</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,color:T.bronze,fontWeight:600}}>{product.salesSage || 0}</div>
+                </div>
+                <div style={{background:T.panelRaised,border:`1px solid ${T.border}`,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:10,color:T.ivoryMuted}}>PrestaShop</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,color:T.gold,fontWeight:600}}>{product.salesPresta || 0}</div>
+                </div>
+              </div>
+              <div style={{marginTop:10,fontSize:11,color:T.inkDim}}>Total article : <b>{product.sales || 0}</b> vente(s)</div>
+            </div>
+
+            <div style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:12,padding:16}}>
+              <div style={{fontSize:9,color:T.ivoryMuted,textTransform:"uppercase",letterSpacing:1.2,marginBottom:8}}>Répartition</div>
+              <div style={{height:12,background:T.panelRaised,borderRadius:999,overflow:"hidden",display:"flex"}}>
+                <div style={{width:`${Math.min(100, ((product.salesSage || 0) / Math.max(1, (product.sales || 0))) * 100)}%`,background:T.bronze}} />
+                <div style={{width:`${Math.min(100, ((product.salesPresta || 0) / Math.max(1, (product.sales || 0))) * 100)}%`,background:T.gold}} />
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:T.ivoryMuted,marginTop:6}}>
+                <span>Sage</span><span>PrestaShop</span>
+              </div>
+            </div>
+
+            <div style={{gridColumn:"1 / -1",background:T.panel,border:`1px solid ${T.border}`,borderRadius:12,padding:16}}>
+              <div style={{fontSize:9,color:T.ivoryMuted,textTransform:"uppercase",letterSpacing:1.2,marginBottom:10}}>Détail ventes par déclinaison</div>
+              <div style={{maxHeight:260,overflow:"auto",border:`1px solid ${T.border}`,borderRadius:10}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                  <thead>
+                    <tr style={{background:T.panelRaised}}>
+                      {["Désignation", "Sage", "PrestaShop", "Total"].map(h => (
+                        <th key={h} style={{textAlign:"left",padding:"8px 10px",color:T.ivoryMuted,fontSize:9,textTransform:"uppercase",letterSpacing:1}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(product.variations || []).length > 0 ? (product.variations || []).map(v => (
+                      <tr key={v.id} style={{borderTop:`1px solid ${T.border}`}}>
+                        <td style={{padding:"8px 10px"}}>{mojibakeFix(v.label)}</td>
+                        <td style={{padding:"8px 10px",fontFamily:"'DM Mono',monospace"}}>{v.salesSage || 0}</td>
+                        <td style={{padding:"8px 10px",fontFamily:"'DM Mono',monospace"}}>{v.salesPresta || 0}</td>
+                        <td style={{padding:"8px 10px",fontFamily:"'DM Mono',monospace",fontWeight:700}}>{v.sales || 0}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td style={{padding:"12px 10px"}}>{mojibakeFix(product.name)}</td>
+                        <td style={{padding:"12px 10px",fontFamily:"'DM Mono',monospace"}}>{product.salesSage || 0}</td>
+                        <td style={{padding:"12px 10px",fontFamily:"'DM Mono',monospace"}}>{product.salesPresta || 0}</td>
+                        <td style={{padding:"12px 10px",fontFamily:"'DM Mono',monospace",fontWeight:700}}>{product.sales || 0}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -807,12 +878,28 @@ function ProductsModule() {
   const [cat,    setCat]      = useState("all");
   const [sort,   setSort]     = useState("name");
   const [modal,  setModal]    = useState(null);
+  const [page, setPage]       = useState(1);
+  const PAGE_SIZE = 200;
+  const searchLc = search.toLowerCase();
 
-  const filtered = PRODUCTS.filter(p =>
-    (filter==="all" || (filter==="sync"&&p.sage&&p.presta) || (filter==="unsync"&&(!p.sage||!p.presta)) || (filter==="rupture"&&p.stock===0) || (filter==="new"&&p.isNew) || (filter==="slow"&&p.daysInStock>150))
-    && (cat==="all" || p.category===cat)
-    && [p.name,p.ref,p.variantRefs || "",p.category,p.supplier||""].some(s=>String(s).toLowerCase().includes(search.toLowerCase()))
-  ).sort((a,b)=>({name:a.name.localeCompare(b.name),stock:a.stock-b.stock,price:b.priceShop-a.priceShop,sales:b.sales-a.sales,days:b.daysInStock-a.daysInStock}[sort]||0));
+  useEffect(() => {
+    setPage(1);
+  }, [search, filter, cat, sort]);
+
+  const filtered = useMemo(() => (
+    PRODUCTS.filter(p =>
+      (filter==="all" || (filter==="sync"&&p.sage&&p.presta) || (filter==="unsync"&&(!p.sage||!p.presta)) || (filter==="rupture"&&p.stock===0) || (filter==="new"&&p.isNew) || (filter==="slow"&&p.daysInStock>150))
+      && (cat==="all" || p.category===cat)
+      && [p.name,p.ref,p.variantRefs || "",p.category,p.supplier||""].some(s=>String(s).toLowerCase().includes(searchLc))
+    ).sort((a,b)=>({name:a.name.localeCompare(b.name),stock:a.stock-b.stock,price:b.priceShop-a.priceShop,sales:b.sales-a.sales,days:b.daysInStock-a.daysInStock}[sort]||0))
+  ), [filter, cat, sort, searchLc]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageSafe = Math.min(page, totalPages);
+  const visibleRows = useMemo(
+    () => filtered.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE),
+    [filtered, pageSafe]
+  );
 
   const STATUS = [
     {id:"all",    label:"Tous",          count:PRODUCTS.length},
@@ -831,7 +918,7 @@ function ProductsModule() {
 
       {/* Search bar */}
       <div style={{position:"relative",marginBottom:16}}>
-        <span style={{position:"absolute",left:18,top:"50%",transform:"translateY(-50%)",color:T.ivoryMuted,fontSize:14,pointerEvents:"none"}}>⌕</span>
+        <span style={{position:"absolute",left:18,top:"50%",transform:"translateY(-50%)",color:T.ivoryMuted,fontSize:14,pointerEvents:"none"}}>?</span>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Rechercher — nom, référence, catégorie, fournisseur…"
           style={{width:"100%",background:T.panel,border:`1px solid ${T.border}`,borderRadius:14,padding:"13px 18px 13px 46px",color:T.ink,fontSize:13,outline:"none",boxSizing:"border-box",
             fontFamily:"inherit",transition:"border-color .2s"}}
@@ -840,11 +927,11 @@ function ProductsModule() {
         />
         <div style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",display:"flex",gap:8,alignItems:"center"}}>
           <select value={sort} onChange={e=>setSort(e.target.value)} style={{background:"transparent",border:"none",color:T.ivoryMuted,fontSize:11,cursor:"pointer",outline:"none",fontFamily:"inherit"}}>
-            <option value="name">Nom A→Z</option>
-            <option value="stock">Stock ↑</option>
-            <option value="price">Prix ↓</option>
-            <option value="sales">Ventes ↓</option>
-            <option value="days">Ancienneté ↓</option>
+            <option value="name">Nom A?Z</option>
+            <option value="stock">Stock ?</option>
+            <option value="price">Prix ?</option>
+            <option value="sales">Ventes ?</option>
+            <option value="days">Ancienneté ?</option>
           </select>
         </div>
       </div>
@@ -876,7 +963,7 @@ function ProductsModule() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p,idx)=>{
+              {visibleRows.map((p,idx)=>{
                 const ss=stockStatus(p); const pt=promoType(p);
                 const m=(((p.priceShop-p.price)/p.price)*100).toFixed(0);
                 return (
@@ -897,7 +984,7 @@ function ProductsModule() {
                     </td>
                     <td style={{padding:"13px 14px",fontFamily:"'DM Mono',monospace",fontSize:10,color:T.bronze}}>{p.displayRef ? mojibakeFix(p.displayRef) : "—"}</td>
                     <td style={{padding:"13px 14px"}}>
-                      <span style={{background:T.panelRaised,borderRadius:6,padding:"3px 8px",fontSize:10,color:T.ivoryMuted}}>{CAT_ICONS[mojibakeFix(p.category)] || "📦"} {mojibakeFix(p.category)}</span>
+                      <span style={{background:T.panelRaised,borderRadius:6,padding:"3px 8px",fontSize:10,color:T.ivoryMuted}}>{CAT_ICONS[mojibakeFix(p.category)] || "??"} {mojibakeFix(p.category)}</span>
                     </td>
                     <td style={{padding:"13px 14px"}}>
                       <span style={{fontFamily:"'DM Mono',monospace",color:ss.c,fontWeight:500,fontSize:15}}>{p.stock}</span>
@@ -920,8 +1007,8 @@ function ProductsModule() {
                     </td>
                     <td style={{padding:"13px 14px"}}>
                       <div style={{display:"flex",gap:3}}>
-                        <span style={{fontSize:12}} title="Sage">{p.sage?"🟢":"🔴"}</span>
-                        <span style={{fontSize:12}} title="PrestaShop">{p.presta?"🟢":"🔴"}</span>
+                        <span style={{fontSize:12}} title="Sage">{p.sage?"??":"??"}</span>
+                        <span style={{fontSize:12}} title="PrestaShop">{p.presta?"??":"??"}</span>
                       </div>
                     </td>
                     <td style={{padding:"13px 14px"}}>
@@ -935,7 +1022,7 @@ function ProductsModule() {
                           onClick={e=>{e.stopPropagation(); if (p.productUrl) window.open(p.productUrl, "_blank", "noopener,noreferrer");}}
                           style={{padding:"5px 9px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}
                           title="Ouvrir sur PrestaShop"
-                        >↗</button>
+                        >?</button>
                       </div>
                     </td>
                   </tr>
@@ -947,9 +1034,17 @@ function ProductsModule() {
         {filtered.length===0&&<div style={{padding:48,textAlign:"center",color:T.ivoryMuted,fontStyle:"italic",fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:18}}>Aucun produit trouvé</div>}
       </div>
 
-      <div style={{marginTop:12,display:"flex",justifyContent:"space-between",fontSize:11,color:T.ivoryMuted}}>
-        <span>{filtered.length} produit(s) affiché(s)</span>
+      <div style={{marginTop:12,display:"flex",justifyContent:"space-between",fontSize:11,color:T.ivoryMuted,alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <span>{filtered.length} produit(s) · page {pageSafe}/{totalPages} · {visibleRows.length} lignes visibles</span>
         <span>Valeur stock visible : {money(filtered.reduce((s,p)=>s+p.priceShop*p.stock,0))}</span>
+        {totalPages > 1 && (
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setPage(1)} disabled={pageSafe===1} style={{padding:"4px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,cursor:pageSafe===1?"not-allowed":"pointer"}}>≪</button>
+            <button onClick={()=>setPage(p=>Math.max(1,p-1))} disabled={pageSafe===1} style={{padding:"4px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,cursor:pageSafe===1?"not-allowed":"pointer"}}>Prec.</button>
+            <button onClick={()=>setPage(p=>Math.min(totalPages,p+1))} disabled={pageSafe===totalPages} style={{padding:"4px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,cursor:pageSafe===totalPages?"not-allowed":"pointer"}}>Suiv.</button>
+            <button onClick={()=>setPage(totalPages)} disabled={pageSafe===totalPages} style={{padding:"4px 8px",borderRadius:8,border:`1px solid ${T.border}`,background:"transparent",color:T.ivoryMuted,cursor:pageSafe===totalPages?"not-allowed":"pointer"}}>≫</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1093,10 +1188,10 @@ function ReportingModule({ salesData = SALES }) {
 
         {sales&&(
           <div style={{background:"#c060a018",border:"1px solid #c060a033",borderRadius:12,padding:"12px 18px",marginBottom:16,display:"flex",gap:12,alignItems:"center"}}>
-            <span style={{fontSize:26}}>🏷️</span>
+            <span style={{fontSize:26}}>???</span>
             <div>
               <div style={{fontWeight:700,color:"#e090c0",fontSize:13}}>Mode soldes activé — {saleProds.length} produits éligibles</div>
-              <div style={{fontSize:11,color:T.ivoryMuted,marginTop:2}}>Sélection basée sur ancienneté stock (&gt;60j) · Remise suggérée −40 %</div>
+              <div style={{fontSize:11,color:T.ivoryMuted,marginTop:2}}>Sélection basée sur ancienneté stock (&gt;60j) · Remise suggérée -40 %</div>
             </div>
           </div>
         )}
@@ -1211,6 +1306,69 @@ function SalesModule({ salesData = SALES }) {
             </div>
           ))}
         </div>
+        )}
+
+        {tab==="sales" && (
+          <div style={{padding:"22px 32px 28px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+            <div style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:12,padding:16}}>
+              <div style={{fontSize:9,color:T.ivoryMuted,textTransform:"uppercase",letterSpacing:1.2,marginBottom:8}}>Totaux ventes</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div style={{background:T.panelRaised,border:`1px solid ${T.border}`,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:10,color:T.ivoryMuted}}>Sage</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,color:T.bronze,fontWeight:600}}>{product.salesSage || 0}</div>
+                </div>
+                <div style={{background:T.panelRaised,border:`1px solid ${T.border}`,borderRadius:10,padding:10}}>
+                  <div style={{fontSize:10,color:T.ivoryMuted}}>PrestaShop</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,color:T.gold,fontWeight:600}}>{product.salesPresta || 0}</div>
+                </div>
+              </div>
+              <div style={{marginTop:10,fontSize:11,color:T.inkDim}}>Total article : <b>{product.sales || 0}</b> vente(s)</div>
+            </div>
+
+            <div style={{background:T.panel,border:`1px solid ${T.border}`,borderRadius:12,padding:16}}>
+              <div style={{fontSize:9,color:T.ivoryMuted,textTransform:"uppercase",letterSpacing:1.2,marginBottom:8}}>Répartition</div>
+              <div style={{height:12,background:T.panelRaised,borderRadius:999,overflow:"hidden",display:"flex"}}>
+                <div style={{width:`${Math.min(100, ((product.salesSage || 0) / Math.max(1, (product.sales || 0))) * 100)}%`,background:T.bronze}} />
+                <div style={{width:`${Math.min(100, ((product.salesPresta || 0) / Math.max(1, (product.sales || 0))) * 100)}%`,background:T.gold}} />
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:T.ivoryMuted,marginTop:6}}>
+                <span>Sage</span><span>PrestaShop</span>
+              </div>
+            </div>
+
+            <div style={{gridColumn:"1 / -1",background:T.panel,border:`1px solid ${T.border}`,borderRadius:12,padding:16}}>
+              <div style={{fontSize:9,color:T.ivoryMuted,textTransform:"uppercase",letterSpacing:1.2,marginBottom:10}}>Détail ventes par déclinaison</div>
+              <div style={{maxHeight:260,overflow:"auto",border:`1px solid ${T.border}`,borderRadius:10}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                  <thead>
+                    <tr style={{background:T.panelRaised}}>
+                      {["Désignation", "Sage", "PrestaShop", "Total"].map(h => (
+                        <th key={h} style={{textAlign:"left",padding:"8px 10px",color:T.ivoryMuted,fontSize:9,textTransform:"uppercase",letterSpacing:1}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(product.variations || []).length > 0 ? (product.variations || []).map(v => (
+                      <tr key={v.id} style={{borderTop:`1px solid ${T.border}`}}>
+                        <td style={{padding:"8px 10px"}}>{mojibakeFix(v.label)}</td>
+                        <td style={{padding:"8px 10px",fontFamily:"'DM Mono',monospace"}}>{v.salesSage || 0}</td>
+                        <td style={{padding:"8px 10px",fontFamily:"'DM Mono',monospace"}}>{v.salesPresta || 0}</td>
+                        <td style={{padding:"8px 10px",fontFamily:"'DM Mono',monospace",fontWeight:700}}>{v.sales || 0}</td>
+                      </tr>
+                    )) : (
+                      <tr>
+                        <td style={{padding:"12px 10px"}}>{mojibakeFix(product.name)}</td>
+                        <td style={{padding:"12px 10px",fontFamily:"'DM Mono',monospace"}}>{product.salesSage || 0}</td>
+                        <td style={{padding:"12px 10px",fontFamily:"'DM Mono',monospace"}}>{product.salesPresta || 0}</td>
+                        <td style={{padding:"12px 10px",fontFamily:"'DM Mono',monospace",fontWeight:700}}>{product.sales || 0}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1952,7 +2110,7 @@ export default function App() {
             <button onClick={syncLiveData} disabled={syncState.loading} style={{width:"100%",padding:"8px",borderRadius:9,background:"transparent",border:"1px solid rgba(255,255,255,0.18)",color:"#d2e1ee",fontSize:11,cursor:syncState.loading?"wait":"pointer",fontFamily:"inherit",transition:"all .15s",opacity:syncState.loading?0.7:1}}
               onMouseEnter={e=>{e.target.style.borderColor="#25b9d7";e.target.style.color="#ffffff"}}
               onMouseLeave={e=>{e.target.style.borderColor="rgba(255,255,255,0.18)";e.target.style.color="#d2e1ee"}}>
-              ↻ Forcer la synchro
+              ? Forcer la synchro
             </button>
 
             <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid rgba(255,255,255,0.10)"}}>
@@ -1984,7 +2142,7 @@ export default function App() {
             {hasLiveData ? CONTENT[active] : (
               <div style={{padding:"36px 32px",color:T.ink}}>
                 <h2 style={{fontFamily:"'Montserrat','Open Sans',sans-serif",fontSize:24,margin:"0 0 8px"}}>Données live non chargées</h2>
-                <p style={{fontSize:13,color:T.ivoryMuted,margin:0}}>Clique sur <b>↻ Forcer la synchro</b> après avoir démarré le backend/superviseur. Aucune donnée démo n'est affichée.</p>
+                <p style={{fontSize:13,color:T.ivoryMuted,margin:0}}>Clique sur <b>? Forcer la synchro</b> après avoir démarré le backend/superviseur. Aucune donnée démo n'est affichée.</p>
               </div>
             )}
           </div>
@@ -1993,4 +2151,6 @@ export default function App() {
     </div>
   );
 }
+
+
 
