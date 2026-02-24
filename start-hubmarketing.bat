@@ -4,19 +4,12 @@ setlocal
 set "ROOT=%~dp0"
 
 echo [HubMarketing] Demarrage du superviseur...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList '/c cd /d ""%ROOT%hubmarketing-ui\server"" && npm run supervisor'"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%scripts\start-hidden-processes.ps1"
 
 timeout /t 2 /nobreak >nul
 
 echo [HubMarketing] Demarrage du backend via superviseur...
-powershell -NoProfile -Command "try { Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:4010/api/supervisor/start' -TimeoutSec 8 ^| Out-Null } catch { }"
-
-timeout /t 1 /nobreak >nul
-
-echo [HubMarketing] Demarrage du front...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList '/c cd /d ""%ROOT%hubmarketing-ui"" && npm run dev'"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $null = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:4010/api/supervisor/start' -TimeoutSec 8 } catch { }"
 
 timeout /t 2 /nobreak >nul
 
