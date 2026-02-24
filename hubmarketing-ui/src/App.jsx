@@ -341,6 +341,16 @@ function mapPrestaProducts(
         .map(v => optionValueMap[String(v.id || v)] || "")
         .filter(Boolean)
         .join(" / ");
+      const comboDesignation = stripHtml(
+        readLocalized(
+          c.designation ||
+          c.name ||
+          c.description ||
+          c.label ||
+          c.libelle ||
+          ""
+        )
+      ).trim();
       const priceImpactHt = toNum(c.price || 0);
       const comboHt = Math.max(0, priceHt + priceImpactHt);
       const comboTtc = Math.max(0, Math.round(comboHt * (1 + taxRate / 100)));
@@ -355,7 +365,7 @@ function mapPrestaProducts(
       return {
         id: toNum(c.id),
         ref: cref,
-        label: optionLabel || cref || `Déclinaison #${c.id}`,
+        label: optionLabel || comboDesignation || cref || `Déclinaison #${c.id}`,
         priceTtc: comboTtc,
         priceHt: comboHt,
         stock: stockCombo,
@@ -745,7 +755,7 @@ function ProductModal({product, onClose}) {
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                     <thead>
                       <tr style={{background:T.panelRaised}}>
-                        {["Déclinaison","Réf.","Stock","TTC Presta","TTC Sage","Ventes/réf","OK"].map(h=>(
+                        {["Désignation","Stock","TTC Presta","TTC Sage","Ventes/réf","OK"].map(h=>(
                           <th key={h} style={{textAlign:"left",padding:"7px 8px",color:T.ivoryMuted,fontSize:9,textTransform:"uppercase",letterSpacing:1}}>{h}</th>
                         ))}
                       </tr>
@@ -754,7 +764,6 @@ function ProductModal({product, onClose}) {
                       {(product.variations || []).map(v=>(
                         <tr key={v.id} style={{borderTop:`1px solid ${T.border}`}}>
                           <td style={{padding:"7px 8px"}}>{mojibakeFix(v.label)}</td>
-                          <td style={{padding:"7px 8px",fontFamily:"'DM Mono',monospace"}}>{v.ref || "—"}</td>
                           <td style={{padding:"7px 8px"}}>{v.stock}</td>
                           <td style={{padding:"7px 8px"}}>{money(v.priceTtc)}</td>
                           <td style={{padding:"7px 8px"}}>{v.sageTtc ? money(v.sageTtc) : "N/A"}</td>
@@ -1534,6 +1543,7 @@ export default function App() {
   const [active,setActive] = useState("products");
   const [, setVersion] = useState(0);
   const syncInFlightRef = useRef(false);
+  const salesCacheRef = useRef({ at: 0, refsKey: "", sageMap: {}, prestaMap: {} });
   const [hasLiveData, setHasLiveData] = useState(false);
   const [syncState, setSyncState] = useState({
     loading: false,
@@ -1610,8 +1620,8 @@ export default function App() {
       const [sageHealth, psHealth, psProductsRes, psCombRes, psStockAvailRes, sageProductsRes, sageStockRes, taxRatesRes, categoriesRes, suppliersRes, povRes] = await Promise.all([
         fetchJsonWithTimeout(`${API_BASE}/sage/health`, { ok: false }, {}, 10000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/health`, { ok: false }, {}, 10000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/products?limit=2000&batch=400`, { rows: [] }, {}, 45000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/combinations?limit=6000&batch=400`, { rows: [] }, {}, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/products?limit=2000&batch=1000`, { rows: [] }, {}, 45000),
+        fetchJsonWithTimeout(`${API_BASE}/prestashop/combinations?limit=6000&batch=1000`, { rows: [] }, {}, 45000),
         fetchJsonWithTimeout(`${API_BASE}/prestashop/stock-availables?limit=20000`, { rows: [] }, {}, 45000),
         fetchJsonWithTimeout(`${API_BASE}/sage/products?limit=5000`, { rows: [] }, {}, 30000),
         fetchJsonWithTimeout(`${API_BASE}/sage/stock?limit=3000`, { rows: [] }, {}, 20000),
@@ -1648,20 +1658,12 @@ export default function App() {
         const r = String(c.reference || "").trim().toUpperCase();
         if (r) refsSet.add(r);
       });
-      const refs = [...refsSet].slice(0, 20000);
-
-      const [sageByRefsRes, prestaByRefsRes] = await Promise.all([
-        fetchJsonWithTimeout(`${API_BASE}/sage/sales-by-refs`, { map: {} }, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refs }),
-        }, 45000),
-        fetchJsonWithTimeout(`${API_BASE}/prestashop/sales-by-refs`, { map: {} }, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refs }),
-        }, 45000),
-      ]);
+      const refs = [...refsSet].slice(0, 12000);
+      const refsKey = `${refs.length}:${refs.slice(0, 120).join("|")}`;
+      const cacheFresh = (Date.now() - (salesCacheRef.current.at || 0)) < 10 * 60 * 1000;
+      const canReuseSales = cacheFresh && salesCacheRef.current.refsKey === refsKey;
+      const sageSalesMap = canReuseSales ? (salesCacheRef.current.sageMap || {}) : {};
+      const prestaSalesMap = canReuseSales ? (salesCacheRef.current.prestaMap || {}) : {};
 
       const categoryMap = {};
       (categoriesRes.rows || []).forEach(c => {
@@ -1684,8 +1686,8 @@ export default function App() {
         sageStockRes.rows || [],
         [],
         [],
-        sageByRefsRes.map || {},
-        prestaByRefsRes.map || {},
+        sageSalesMap,
+        prestaSalesMap,
         taxRatesRes.map || {},
         categoryMap,
         supplierMap,
@@ -1707,6 +1709,50 @@ export default function App() {
         error: "",
         status: { sage: !!sageHealth.ok, presta: !!psHealth.ok },
       });
+
+      if (!canReuseSales && refs.length > 0) {
+        (async () => {
+          const [sageByRefsRes, prestaByRefsRes] = await Promise.all([
+            fetchJsonWithTimeout(`${API_BASE}/sage/sales-by-refs`, { map: {} }, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refs }),
+            }, 45000),
+            fetchJsonWithTimeout(`${API_BASE}/prestashop/sales-by-refs`, { map: {} }, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ refs }),
+            }, 45000),
+          ]);
+
+          salesCacheRef.current = {
+            at: Date.now(),
+            refsKey,
+            sageMap: sageByRefsRes.map || {},
+            prestaMap: prestaByRefsRes.map || {},
+          };
+
+          const withSales = mapPrestaProducts(
+            psProductsRows || [],
+            psCombRes.rows || [],
+            psStockAvailRes.rows || [],
+            sageProductsRes.rows || [],
+            sageStockRes.rows || [],
+            [],
+            [],
+            sageByRefsRes.map || {},
+            prestaByRefsRes.map || {},
+            taxRatesRes.map || {},
+            categoryMap,
+            supplierMap,
+            optionValueMap
+          );
+          if (withSales.length > 0) {
+            PRODUCTS.splice(0, PRODUCTS.length, ...withSales);
+            setVersion(v => v + 1);
+          }
+        })().catch(() => {});
+      }
     } catch (e) {
       PRODUCTS.splice(0, PRODUCTS.length);
       setHasLiveData(false);
